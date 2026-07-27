@@ -26,13 +26,10 @@ function Index() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const activeTickers = useMemo(() => {
-    if (activeGroup === "All") {
-      return defaultStocks.map(s => s.symbol);
-    }
-    return stockGroups[activeGroup] ?? [];
-  }, [activeGroup]);
+    return defaultStocks.map(s => s.symbol);
+  }, []);
 
-  // Use smart polling for active tickers
+  // Use smart polling for active tickers (always poll all tickers to keep Movers panels and all group switch data updated)
   const { marketState, data: liveData, loading, refresh } = useSmartPolling(activeTickers);
 
   const mergedStocks = useMemo(() => {
@@ -301,9 +298,6 @@ function StockCard({ stock }: { stock: Stock }) {
             <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{stock.name}</p>
           </div>
         </div>
-        <button className="text-muted-foreground transition-colors hover:text-primary">
-          <Star className="h-4 w-4" />
-        </button>
       </div>
 
       <div className="mt-5 flex items-end justify-between">
