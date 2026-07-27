@@ -3,9 +3,29 @@ import { getMarketState, type MarketState } from "@/lib/market-hours";
 
 export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
   const [marketState, setMarketState] = useState<MarketState>(getMarketState());
-  const [data, setData] = useState<any[]>([]);
+  const [data, setData] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('idxgp:last_market_data');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return parsed.data || [];
+      }
+    } catch (e) {
+      console.error('Failed to load cached market data:', e);
+    }
+    return [];
+  });
   const [loading, setLoading] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(() => {
+    try {
+      const cached = localStorage.getItem('idxgp:last_market_data');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return parsed.timestamp ? new Date(parsed.timestamp) : null;
+      }
+    } catch (e) {}
+    return null;
+  });
   const timeoutRef = useRef<any>(null);
   const isFetchingRef = useRef(false);
   const tickersRef = useRef(tickers);
@@ -39,8 +59,18 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
       });
       if (res.ok) {
         const json = await res.json();
-        setData(json.data || []);
-        setLastUpdated(new Date());
+        const freshData = json.data || [];
+        setData(freshData);
+        const now = new Date();
+        setLastUpdated(now);
+        try {
+          localStorage.setItem('idxgp:last_market_data', JSON.stringify({
+            timestamp: now.toISOString(),
+            data: freshData
+          }));
+        } catch (e) {
+          console.error('Failed to cache market data:', e);
+        }
       }
     } catch (err) {
       console.error('Polling fetch failed:', err);

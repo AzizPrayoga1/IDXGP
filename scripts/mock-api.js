@@ -2,6 +2,10 @@
 // Run: node scripts/mock-api.js
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const CACHE_FILE = path.join(__dirname, 'mock-closing-prices.json');
 
 function getMarketState(date = new Date()) {
   const formatter = new Intl.DateTimeFormat('en-US', {
@@ -60,30 +64,82 @@ const server = http.createServer((req, res) => {
         COMPOSITE: 6185.78, LQ45: 608.58, IDX30: 308.20
       };
 
-      const raw = { totalCount: data.tickers.length, data: data.tickers.map((t, i) => {
-        const base = BASE_PRICES[t] || 1000;
-        const jitter = base * 0.015; // ±1.5% jitter
-        const last = Math.round(base + (Math.random() * 2 - 1) * jitter);
-        const chgPct = ((last - base) / base) * 100;
-        const chgAbs = last - base;
+      const marketState = getMarketState();
 
-        return {
-          s: `IDX:${t}`,
-          d: [
-            last,
-            chgPct,
-            chgAbs,
-            Math.floor(Math.random() * 50000000), // Volume
-            Math.round(base * 1.015),             // High
-            Math.round(base * 0.985),             // Low
-            (Math.random() * 2 - 1)               // Recommendation value
-          ],
-        };
-      })};
-      const mapR = v => typeof v !== 'number' ? 'neutral' : v >= 0.5 ? 'strong_buy' : v >= 0.1 ? 'buy' : v > -0.1 ? 'neutral' : v >= -0.5 ? 'sell' : 'strong_sell';
-      const transformed = raw.data.map(item => { const d = item.d || []; return { ticker: (item.s || '').replace(/^IDX:/, ''), lastPrice: d[0], changePercent: d[1], changeAbsolute: d[2], volume: d[3], high: d[4], low: d[5], rating: mapR(d[6]) }; });
+      let transformed;
+
+      if (marketState === 'open') {
+        const raw = { totalCount: data.tickers.length, data: data.tickers.map((t, i) => {
+          const base = BASE_PRICES[t] || 1000;
+          const jitter = base * 0.015; // ±1.5% jitter
+          const last = Math.round(base + (Math.random() * 2 - 1) * jitter);
+          const chgPct = ((last - base) / base) * 100;
+          const chgAbs = last - base;
+
+          return {
+            s: `IDX:${t}`,
+            d: [
+              last,
+              chgPct,
+              chgAbs,
+              Math.floor(Math.random() * 50000000), // Volume
+              Math.round(base * 1.015),             // High
+              Math.round(base * 0.985),             // Low
+              (Math.random() * 2 - 1)               // Recommendation value
+            ],
+          };
+        })};
+
+        const mapR = v => typeof v !== 'number' ? 'neutral' : v >= 0.5 ? 'strong_buy' : v >= 0.1 ? 'buy' : v > -0.1 ? 'neutral' : v >= -0.5 ? 'sell' : 'strong_sell';
+        transformed = raw.data.map(item => { const d = item.d || []; return { ticker: (item.s || '').replace(/^IDX:/, ''), lastPrice: d[0], changePercent: d[1], changeAbsolute: d[2], volume: d[3], high: d[4], low: d[5], rating: mapR(d[6]) }; });
+
+        // Save generated prices to local cache file for persistence when closed
+        try {
+          let cacheData = {};
+          if (fs.existsSync(CACHE_FILE)) {
+            try {
+              cacheData = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+            } catch (e) {}
+          }
+          transformed.forEach(item => {
+            cacheData[item.ticker] = item;
+          });
+          fs.writeFileSync(CACHE_FILE, JSON.stringify(cacheData, null, 2), 'utf8');
+        } catch (e) {
+          console.error('Failed to write mock cache file:', e);
+        }
+      } else {
+        // Read last prices from cache file
+        let cacheData = {};
+        try {
+          if (fs.existsSync(CACHE_FILE)) {
+            cacheData = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+          }
+        } catch (e) {
+          console.error('Failed to read mock cache file:', e);
+        }
+
+        transformed = data.tickers.map(t => {
+          if (cacheData[t]) {
+            return cacheData[t];
+          }
+          // Fallback to static base price if not in cache
+          const base = BASE_PRICES[t] || 1000;
+          return {
+            ticker: t,
+            lastPrice: base,
+            changePercent: 0,
+            changeAbsolute: 0,
+            volume: 0,
+            high: base,
+            low: base,
+            rating: 'neutral'
+          };
+        });
+      }
+
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3' });
-      res.end(JSON.stringify({ timestamp: new Date().toISOString(), marketStatus: getMarketState(), cacheHit: false, data: transformed, errors: [] }));
+      res.end(JSON.stringify({ timestamp: new Date().toISOString(), marketStatus: marketState, cacheHit: false, data: transformed, errors: [] }));
     } catch { res.writeHead(400, { ...cors, 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); }
   });
 });
