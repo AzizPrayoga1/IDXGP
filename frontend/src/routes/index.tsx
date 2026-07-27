@@ -1,9 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowDown, ArrowUp, LayoutGrid, ListFilter, Search, Star, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowDown, ArrowUp, LayoutGrid, ListFilter, Search, Star, TrendingDown, TrendingUp, Clock, Pause, RefreshCw } from "lucide-react";
 
-import { stocks, stockGroups, marketIndices, type Stock, formatCompactNumber, formatVolume } from "@/lib/stocks.data";
+import { stocks as defaultStocks, stockGroups, marketIndices, type Stock, formatCompactNumber, formatVolume } from "@/lib/stocks.data";
+import { useSmartPolling } from "@/hooks/useSmartPolling";
+import { getMarketState, type MarketState } from "@/lib/market-hours";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -23,8 +25,43 @@ function Index() {
   const [activeGroup, setActiveGroup] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
 
+  const activeTickers = useMemo(() => {
+    if (activeGroup === "All") {
+      return defaultStocks.map(s => s.symbol);
+    }
+    return stockGroups[activeGroup] ?? [];
+  }, [activeGroup]);
+
+  // Use smart polling for active tickers
+  const { marketState, data: liveData, loading, refresh } = useSmartPolling(activeTickers);
+
+  const mergedStocks = useMemo(() => {
+    return defaultStocks.map(s => {
+      const live = liveData.find(l => l.ticker === s.symbol);
+      if (live) {
+        // Return updated stock data, generating fresh sparkline segment if price changed
+        const currentSparkline = [...s.sparkline];
+        if (live.lastPrice !== s.price) {
+          currentSparkline.shift();
+          currentSparkline.push(live.lastPrice);
+        }
+        return {
+          ...s,
+          price: live.lastPrice ?? s.price,
+          changePercent: live.changePercent ?? s.changePercent,
+          change: live.changeAbsolute ?? s.change,
+          volume: live.volume ?? s.volume,
+          high: live.high ?? s.high,
+          low: live.low ?? s.low,
+          sparkline: currentSparkline
+        };
+      }
+      return s;
+    });
+  }, [liveData]);
+
   const filteredStocks = useMemo(() => {
-    let result = stocks;
+    let result = mergedStocks;
     if (activeGroup !== "All") {
       const symbols = stockGroups[activeGroup] ?? [];
       result = result.filter((s) => symbols.includes(s.symbol));
@@ -36,17 +73,17 @@ function Index() {
       );
     }
     return result;
-  }, [activeGroup, searchQuery]);
+  }, [activeGroup, searchQuery, mergedStocks]);
 
-  const topGainers = useMemo(() => [...stocks].sort((a, b) => b.changePercent - a.changePercent).slice(0, 4), []);
-  const topLosers = useMemo(() => [...stocks].sort((a, b) => a.changePercent - b.changePercent).slice(0, 4), []);
+  const topGainers = useMemo(() => [...mergedStocks].sort((a, b) => b.changePercent - a.changePercent).slice(0, 4), [mergedStocks]);
+  const topLosers = useMemo(() => [...mergedStocks].sort((a, b) => a.changePercent - b.changePercent).slice(0, 4), [mergedStocks]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <Header />
+      <Header marketState={marketState} loading={loading} onRefresh={refresh} />
 
       <main className="mx-auto max-w-7xl px-4 pb-20 sm:px-6 lg:px-8">
-        <HeroSection />
+        <HeroSection marketState={marketState} />
 
         <MarketIndices />
 
@@ -88,7 +125,21 @@ function Index() {
   );
 }
 
-function Header() {
+function Header({ marketState, loading, onRefresh }: { marketState: MarketState; loading: boolean; onRefresh: () => void }) {
+  const getStatusDetails = () => {
+    switch (marketState) {
+      case 'MARKET_OPEN':
+        return { color: 'bg-emerald-500', text: 'Market Open', pulse: true };
+      case 'MARKET_BREAK':
+        return { color: 'bg-amber-500', text: 'Market Break', pulse: false };
+      case 'MARKET_CLOSED':
+        default:
+        return { color: 'bg-rose-500', text: 'Market Closed', pulse: false };
+    }
+  };
+
+  const status = getStatusDetails();
+
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -98,12 +149,39 @@ function Header() {
           </div>
           <span className="font-heading text-lg font-bold tracking-tight">IDXGP</span>
         </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground">
+            <span className={`h-2 w-2 rounded-full ${status.color} ${status.pulse ? 'animate-pulse' : ''}`} />
+            <span>{status.text}</span>
+          </div>
+
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            title="Manual Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
     </header>
   );
 }
 
-function HeroSection() {
+function HeroSection({ marketState }: { marketState: MarketState }) {
+  const getStatusText = () => {
+    switch (marketState) {
+      case 'MARKET_OPEN':
+        return 'Market open · IDX';
+      case 'MARKET_BREAK':
+        return 'Market break · IDX';
+      case 'MARKET_CLOSED':
+        return 'Market closed · IDX';
+    }
+  };
+
   return (
     <section className="gradient-charcoal relative overflow-hidden rounded-3xl border border-border px-6 py-16 sm:px-12 sm:py-20 lg:px-16">
       <div className="absolute inset-0 pointer-events-none opacity-20">
@@ -113,8 +191,8 @@ function HeroSection() {
 
       <div className="relative z-10 max-w-2xl">
         <p className="inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-xs font-medium text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          Market open · IDX
+          <span className={`h-1.5 w-1.5 rounded-full ${marketState === 'MARKET_OPEN' ? 'bg-emerald-500 animate-pulse' : marketState === 'MARKET_BREAK' ? 'bg-amber-500' : 'bg-rose-500'}`} />
+          {getStatusText()}
         </p>
         <h1 className="mt-6 font-heading text-4xl font-bold leading-tight tracking-tight text-foreground sm:text-5xl lg:text-6xl">
           Track Indonesian stocks with clarity
