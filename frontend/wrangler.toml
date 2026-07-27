@@ -1,0 +1,8 @@
+name = "idxgp"
+compatibility_date = "2025-04-01"
+
+# Pages Functions — API lives in functions/api/scan.ts
+# No extra config needed, just deploy with:
+# wrangler pages deploy dist
+
+[env.production]
