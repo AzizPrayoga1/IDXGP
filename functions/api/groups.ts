@@ -1,15 +1,17 @@
-// /api/groups — CRUD for user groups
+// /api/groups — CRUD for user groups (password-protected)
 // GET    → list all groups + tickers for user
 // POST   → save full groups state (upsert)
 // DELETE → reset user groups to defaults
 
 export async function onRequest(context) {
   const { request, env } = context;
+  const allowedOrigin = env.ALLOWED_ORIGIN || 'https://idxgp.pages.dev';
   const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id',
+    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, Authorization',
     'Access-Control-Max-Age': '86400',
+    'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src 'self'; img-src 'self' data:;",
   };
 
   if (request.method === 'OPTIONS')
@@ -19,8 +21,20 @@ export async function onRequest(context) {
   if (!userId || userId.length < 10)
     return json({ error: 'Missing or invalid X-User-Id header' }, 401, corsHeaders);
 
+  // Validate session token (replaces X-Pin)
+  const auth = request.headers.get('Authorization');
+  if (!auth || !auth.startsWith('Bearer '))
+    return json({ error: 'Authorization header required' }, 401, corsHeaders);
+  const token = auth.slice(7);
+
   try {
     const db = env.DB;
+    const now = Math.floor(Date.now() / 1000);
+
+    const user = await db.prepare('SELECT token, token_expires_at FROM users WHERE id = ?').bind(userId).first();
+    if (!user) return json({ error: 'User not found' }, 404, corsHeaders);
+    if (!user.token || user.token !== token) return json({ error: 'Invalid token' }, 401, corsHeaders);
+    if (user.token_expires_at < now) return json({ error: 'Token expired' }, 401, corsHeaders);
 
     switch (request.method) {
       case 'GET':
@@ -76,6 +90,37 @@ async function handlePost(db, userId, request, corsHeaders) {
   const body = await request.json();
   if (!Array.isArray(body.groups))
     return json({ error: 'Invalid payload: groups array required' }, 400, corsHeaders);
+
+  // Reject unknown top-level fields
+  const allowedTopFields = ['groups'];
+  for (const key of Object.keys(body)) {
+    if (!allowedTopFields.includes(key))
+      return json({ error: `Unknown field: ${key}` }, 400, corsHeaders);
+  }
+
+  const tickerRegex = /^[A-Z]{4}$/;
+  const allowedGroupFields = ['id', 'name', 'isPreset', 'order', 'tickers'];
+  for (const g of body.groups) {
+    // Reject unknown group fields
+    for (const key of Object.keys(g)) {
+      if (!allowedGroupFields.includes(key))
+        return json({ error: `Unknown field: ${key} in group` }, 400, corsHeaders);
+    }
+    // Validate group name: required string, max 50, no HTML/script
+    if (!g.name || typeof g.name !== 'string')
+      return json({ error: 'Group name is required and must be a string' }, 400, corsHeaders);
+    if (g.name.length > 50)
+      return json({ error: 'Group name must be 50 characters or less' }, 400, corsHeaders);
+    if (/[<>]/.test(g.name))
+      return json({ error: 'Group name contains invalid characters' }, 400, corsHeaders);
+    // Validate ticker format
+    if (Array.isArray(g.tickers)) {
+      for (const t of g.tickers) {
+        if (!tickerRegex.test(t))
+          return json({ error: `Invalid ticker: ${t}` }, 400, corsHeaders);
+      }
+    }
+  }
 
   // Upsert: delete all existing groups for user, then insert new ones
   // Use transaction for atomicity

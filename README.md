@@ -33,6 +33,10 @@ Sebelum deploy pertama:
 ```bash
 npx wrangler d1 create idxgp-db
 # copy database_id ke wrangler.toml
+# WARNING: Jangan commit database_id asli ke git.
+# Gunakan `npx wrangler secret put DATABASE_ID` atau CI env var injection.
+# Tambahkan `database_id = "dev-placeholder"` di wrangler.toml untuk dev lokal,
+# lalu setel ID asli via dashboard Cloudflare atau secrets CI/CD.
 npx wrangler d1 execute --file=migrations/0001_create_tables.sql
 ```
 

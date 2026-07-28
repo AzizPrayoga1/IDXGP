@@ -38,7 +38,7 @@ export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': 'https://idx-dashboard.pages.dev',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
@@ -51,11 +51,18 @@ export async function onRequest(context) {
     return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
 
   try {
+    // Enforce request body size limit (10KB)
+    const contentLength = parseInt(request.headers.get('Content-Length') || '0', 10);
+    if (contentLength > 10240)
+      return json({ error: 'Request body too large' }, 413, corsHeaders);
+
     const body = await request.json();
 
     // --- Validation ---
     if (!Array.isArray(body.tickers) || body.tickers.length === 0)
       return json({ error: 'Invalid ticker list' }, 400, corsHeaders);
+    if (body.tickers.length > 100)
+      return json({ error: 'Ticker list exceeds maximum of 100' }, 400, corsHeaders);
 
     const tickerRegex = /^[A-Z]{4}$/;
     for (const t of body.tickers) {
@@ -100,7 +107,8 @@ export async function onRequest(context) {
 
     if (!tvResp.ok) {
       const errText = await tvResp.text();
-      return json({ error: 'TradingView error', details: errText }, tvResp.status, corsHeaders);
+      console.error('TradingView upstream error:', tvResp.status, errText);
+      return json({ error: 'External scanner unavailable' }, tvResp.status, corsHeaders);
     }
 
     const raw = await tvResp.json();
@@ -133,6 +141,7 @@ export async function onRequest(context) {
       ...corsHeaders,
       'Content-Type': 'application/json',
       'Cache-Control': 'public, max-age=3',
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src 'self'; img-src 'self' data:;",
       'X-Cache': 'MISS',
     });
 
@@ -151,7 +160,7 @@ export async function onRequest(context) {
 function json(data, status, corsHeaders) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src 'self'; img-src 'self' data:;" },
   });
 }
 

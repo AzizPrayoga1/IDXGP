@@ -6,7 +6,7 @@ import { ArrowDown, ArrowUp, LayoutGrid, Search, TrendingDown, TrendingUp, Plus,
 import { stocks as defaultStocks, marketIndices, type Stock, formatCompactNumber, formatVolume } from "@/lib/stocks.data";
 import { useSmartPolling } from "@/hooks/useSmartPolling";
 import { getMarketState, type MarketState } from "@/lib/market-hours";
-import { loadGroups, persistGroups, addGroup, renameGroup, deleteGroup, groupAddTicker, groupRemoveTicker, cloneStore, loadPrefs, syncGroupsFromCloud, type GroupsStore } from "@/lib/storage";
+import { loadGroups, persistGroups, addGroup, renameGroup, deleteGroup, groupAddTicker, groupRemoveTicker, cloneStore, syncGroupsFromCloud, getUserId, isPinVerified, registerUser, verifyPin, markPinVerified, clearSession, type GroupsStore } from "@/lib/storage";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,7 +25,6 @@ export const Route = createFileRoute("/")({
 function Index() {
   const [store, setStore] = useState<GroupsStore>(() => loadGroups());
   const [searchQuery, setSearchQuery] = useState("");
-  const [addingTickerGid, setAddingTickerGid] = useState<string | null>(null);
   const [renamingGid, setRenamingGid] = useState<string | null>(null);
   const [deletingGid, setDeletingGid] = useState<string | null>(null);
   const [undoTicket, setUndoTicket] = useState<{ msg: string; gid: string; sym: string } | null>(null);
@@ -36,10 +35,61 @@ function Index() {
   const [tickerError, setTickerError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Password auth state ──
+  const [pwMode, setPwMode] = useState<'setup' | 'unlock' | null>(null);
+  const [pwInput, setPwInput] = useState("");
+  const [pwError, setPwError] = useState("");
+  const [authDone, setAuthDone] = useState(() => isPinVerified());
+
   const storeRef = useRef(store);
   storeRef.current = store;
 
   const persist = useCallback((s: GroupsStore) => { persistGroups(s); setStore(s); }, []);
+
+  // ── Password auth gate ──
+  useEffect(() => {
+    if (authDone) return;
+    const userId = localStorage.getItem('idxgp:user_id');
+    const token = localStorage.getItem('idxgp:session_token');
+    if (token && userId) {
+      setPwMode('unlock');
+    } else {
+      setPwMode('setup');
+    }
+  }, [authDone]);
+
+  const handlePwSubmit = async () => {
+    const p = pwInput.trim();
+    if (p.length < 8 || p.length > 64) { setPwError('Password 8-64 characters'); return; }
+    if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) { setPwError('Password must contain letter + digit'); return; }
+    const userId = getUserId();
+    let ok;
+    if (pwMode === 'setup') {
+      ok = await registerUser(userId, p);
+      if (!ok) { setPwError('Failed to register. Try again.'); return; }
+    } else {
+      ok = await verifyPin(userId, p);
+      if (!ok) { setPwError('Wrong password'); return; }
+    }
+    setPwInput("");
+    setPwError("");
+    setPwMode(null);
+    setAuthDone(true);
+    // Trigger cloud sync after auth
+    syncGroupsFromCloud().then(cloud => {
+      if (cloud) setStore(prev => {
+        const merged = cloneStore(cloud);
+        if (prev.groups.some(g => g.id === prev.activeGroupId) && cloud.groups.some(g => g.id === prev.activeGroupId))
+          merged.activeGroupId = prev.activeGroupId;
+        return merged;
+      });
+    });
+  };
+
+  const handleLogout = () => {
+    clearSession();
+    setAuthDone(false);
+  };
 
   // Load from cloud on mount (merge with local)
   useEffect(() => {
@@ -143,11 +193,25 @@ function Index() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      try {
-        const data = JSON.parse(ev.target?.result as string);
-        if (!data.version || !Array.isArray(data.groups)) throw new Error('invalid format');
-        persist(cloneStore(data));
-      } catch { alert('Invalid groups file format.'); }
+      let data: any;
+      try { data = JSON.parse(ev.target?.result as string); }
+      catch { alert('Invalid groups file format.'); return; }
+      if (!data.version || !Array.isArray(data.groups)) {
+        alert('Invalid groups file format.'); return;
+      }
+      const valid: any[] = [];
+      let rejected = 0;
+      for (const g of data.groups) {
+        try {
+          if (!g || typeof g.id !== 'string' || typeof g.name !== 'string' || !Array.isArray(g.tickers))
+            { rejected++; continue; }
+          g.tickers = g.tickers.filter((t: any) => /^[A-Z]{4}$/.test(t));
+          valid.push(g);
+        } catch { rejected++; }
+      }
+      if (!valid.length) { alert('No valid groups found in file.'); return; }
+      persist(cloneStore({ version: data.version, activeGroupId: data.activeGroupId ?? data.groups[0]?.id, groups: valid }));
+      if (rejected > 0) alert(`Imported ${valid.length} group(s). ${rejected} group(s) skipped due to invalid structure.`);
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -192,9 +256,42 @@ function Index() {
 
   const isCustom = activeGroup && !activeGroup.isPreset && activeGroup.id !== '__all__';
 
+  // ── Password overlay ──
+  if (pwMode) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 shadow-xl">
+          <div className="mb-6 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <TrendingUp className="h-6 w-6" />
+            </div>
+            <h1 className="font-heading text-xl font-bold text-foreground">IDXGP</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {pwMode === 'setup' ? 'Set a password to save groups to cloud' : 'Enter your password to unlock'}
+            </p>
+          </div>
+          <input
+            type="password"
+            autoFocus
+            value={pwInput}
+            onChange={e => { setPwInput(e.target.value); setPwError(""); }}
+            onKeyDown={e => { if (e.key === 'Enter') handlePwSubmit(); }}
+            placeholder="Password (8+ chars, letter + digit)"
+            maxLength={64}
+            className="w-full rounded-lg border border-border bg-card px-4 py-3 text-center text-lg text-foreground tracking-widest placeholder:text-sm placeholder:tracking-normal focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          {pwError && <p className="mt-2 text-center text-sm text-red-400">{pwError}</p>}
+          <button onClick={handlePwSubmit} className="mt-4 w-full cursor-pointer rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:opacity-90 active:scale-[0.98]">
+            {pwMode === 'setup' ? 'Set Password' : 'Unlock'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <Header marketState={marketState} loading={loading} onRefresh={refresh} />
+      <Header marketState={marketState} loading={loading} onRefresh={refresh} onLogout={handleLogout} />
 
       <div className="mx-auto flex max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:px-8">
         {/* Sidebar */}
@@ -485,7 +582,7 @@ function StockCard({ stock }: { stock: Stock }) {
 }
 
 /* ── Header ── */
-function Header({ marketState, loading, onRefresh }: { marketState: MarketState; loading: boolean; onRefresh: () => void }) {
+function Header({ marketState, loading, onRefresh, onLogout }: { marketState: MarketState; loading: boolean; onRefresh: () => void; onLogout?: () => void }) {
   const getStatusDetails = () => {
     switch (marketState) {
       case 'MARKET_OPEN': return { color: 'bg-emerald-500', text: 'Market Open', pulse: true };
@@ -512,6 +609,7 @@ function Header({ marketState, loading, onRefresh }: { marketState: MarketState;
             className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-all hover:text-foreground active:scale-90 disabled:opacity-50" title="Manual Refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
+          {onLogout && <button onClick={onLogout} className="flex h-9 cursor-pointer items-center gap-1 rounded-lg border border-border bg-card px-3 text-xs text-muted-foreground transition-all hover:text-foreground active:scale-90" title="Lock">Lock</button>}
         </div>
       </div>
     </header>

@@ -1,6 +1,8 @@
 -- Migration 0001: Users, groups, and group_tickers tables
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
+  pin_hash TEXT NOT NULL DEFAULT '',
+  pin_salt TEXT NOT NULL DEFAULT '',
   created_at TEXT DEFAULT (datetime('now'))
 );
 
