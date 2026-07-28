@@ -2,6 +2,9 @@ node_modules/
 dist/
 .env
 *.local
-frontend/dist/
+.tanstack/
+mock-data/
+scripts/mock-closing-prices.json
+.cache/
+.claude/
 .DS_Store
-frontend/.tanstack/

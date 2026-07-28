@@ -6,7 +6,7 @@ import { ArrowDown, ArrowUp, LayoutGrid, Search, TrendingDown, TrendingUp, Plus,
 import { stocks as defaultStocks, marketIndices, type Stock, formatCompactNumber, formatVolume } from "@/lib/stocks.data";
 import { useSmartPolling } from "@/hooks/useSmartPolling";
 import { getMarketState, type MarketState } from "@/lib/market-hours";
-import { loadGroups, persistGroups, addGroup, renameGroup, deleteGroup, groupAddTicker, groupRemoveTicker, cloneStore, loadPrefs, type GroupsStore } from "@/lib/storage";
+import { loadGroups, persistGroups, addGroup, renameGroup, deleteGroup, groupAddTicker, groupRemoveTicker, cloneStore, loadPrefs, syncGroupsFromCloud, type GroupsStore } from "@/lib/storage";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -34,11 +34,29 @@ function Index() {
   const [createError, setCreateError] = useState("");
   const [newTicker, setNewTicker] = useState("");
   const [tickerError, setTickerError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const storeRef = useRef(store);
   storeRef.current = store;
 
   const persist = useCallback((s: GroupsStore) => { persistGroups(s); setStore(s); }, []);
+
+  // Load from cloud on mount (merge with local)
+  useEffect(() => {
+    syncGroupsFromCloud().then(cloud => {
+      if (cloud) {
+        // Merge: cloud wins, but keep local activeGroupId if groups structure matches
+        setStore(prev => {
+          const merged = cloneStore(cloud);
+          // Try to keep local activeGroupId if it still exists in cloud data
+          if (prev.groups.some(g => g.id === prev.activeGroupId) && cloud.groups.some(g => g.id === prev.activeGroupId)) {
+            merged.activeGroupId = prev.activeGroupId;
+          }
+          return merged;
+        });
+      }
+    });
+  }, []);
 
   const activeGroup = store.groups.find(g => g.id === store.activeGroupId);
   const activeTickers = useMemo(() => {
@@ -112,6 +130,29 @@ function Index() {
     setUndoTicket(null);
   };
 
+  const exportGroups = () => {
+    const blob = new Blob([JSON.stringify(storeRef.current, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `idxgp-groups-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  const importGroups = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        if (!data.version || !Array.isArray(data.groups)) throw new Error('invalid format');
+        persist(cloneStore(data));
+      } catch { alert('Invalid groups file format.'); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleCreate = () => {
     const s = cloneStore(storeRef.current);
     const result = addGroup(s, createName);
@@ -161,7 +202,7 @@ function Index() {
           <div className="sticky top-24 space-y-1">
             <div className="mb-3 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Groups</span>
-              <button onClick={() => { setShowCreate(true); setCreateName(""); }} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title="New Group"><Plus className="h-4 w-4" /></button>
+              <button onClick={() => { setShowCreate(true); setCreateName(""); }} className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground active:scale-90 transition-all" title="New Group"><Plus className="h-4 w-4" /></button>
             </div>
             {store.groups.map(g => (
               <div key={g.id} className="group -mx-1 flex items-center rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-muted/40">
@@ -177,7 +218,7 @@ function Index() {
                 ) : (
                   <button
                     onClick={() => { const s = cloneStore(storeRef.current); persist({ ...s, activeGroupId: g.id }); }}
-                    className={`flex min-w-0 flex-1 items-center gap-2 rounded-md text-left ${store.activeGroupId === g.id ? 'text-foreground' : 'text-muted-foreground'}`}
+                    className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left active:scale-[0.98] ${store.activeGroupId === g.id ? 'text-foreground' : 'text-muted-foreground'}`}
                   >
                     <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${store.activeGroupId === g.id ? 'rotate-90' : ''}`} />
                     <span className={`truncate ${store.activeGroupId === g.id ? 'font-medium' : ''}`}>{g.name}</span>
@@ -186,12 +227,18 @@ function Index() {
                 )}
                 {renamingGid !== g.id && g.id !== '__all__' && (
                   <div className="ml-auto hidden shrink-0 items-center gap-0.5 group-hover:flex">
-                    <button onClick={() => setRenamingGid(g.id)} className="rounded p-0.5 text-muted-foreground hover:text-foreground" title="Rename"><Edit3 className="h-3 w-3" /></button>
-                    {!g.isPreset && <button onClick={() => setDeletingGid(g.id)} className="rounded p-0.5 text-muted-foreground hover:text-red-400" title="Delete"><Trash2 className="h-3 w-3" /></button>}
+                    <button onClick={() => setRenamingGid(g.id)} className="rounded p-0.5 text-muted-foreground hover:text-foreground active:scale-90 transition-transform" title="Rename"><Edit3 className="h-3 w-3" /></button>
+                    {!g.isPreset && <button onClick={() => setDeletingGid(g.id)} className="rounded p-0.5 text-muted-foreground hover:text-red-400 active:scale-90 transition-transform" title="Delete"><Trash2 className="h-3 w-3" /></button>}
                   </div>
                 )}
               </div>
             ))}
+            <div className="mt-6 flex flex-col gap-1 border-t border-border pt-4">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Sync</span>
+              <button onClick={exportGroups} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-all hover:bg-muted/40 hover:text-foreground active:scale-[0.98]">Export Groups</button>
+              <button onClick={() => fileInputRef.current?.click()} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-all hover:bg-muted/40 hover:text-foreground active:scale-[0.98]">Import Groups</button>
+              <input ref={fileInputRef} type="file" accept=".json" onChange={importGroups} className="hidden" />
+            </div>
           </div>
         </aside>
 
@@ -238,7 +285,7 @@ function Index() {
                   maxLength={4}
                   className="w-36 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
-                <button onClick={() => handleAddTicker(activeGroup.id)} className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">+ Add</button>
+                <button onClick={() => handleAddTicker(activeGroup.id)} className="cursor-pointer rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-all hover:opacity-90 active:scale-95">+ Add</button>
                 {tickerError && <span className="text-xs text-red-400">{tickerError}</span>}
               </div>
             )}
@@ -303,8 +350,8 @@ function Index() {
           />
           {createError && <p className="mt-2 text-xs text-red-400">{createError}</p>}
           <div className="mt-4 flex justify-end gap-2">
-            <button onClick={() => setShowCreate(false)} className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
-            <button onClick={handleCreate} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">Create</button>
+            <button onClick={() => setShowCreate(false)} className="cursor-pointer rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-all hover:text-foreground active:scale-95">Cancel</button>
+            <button onClick={handleCreate} className="cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-all hover:opacity-90 active:scale-95">Create</button>
           </div>
         </Modal>
       )}
@@ -314,8 +361,8 @@ function Index() {
         <Modal title="Delete Group" onClose={() => setDeletingGid(null)}>
           <p className="text-sm text-muted-foreground">Are you sure? This action cannot be undone.</p>
           <div className="mt-4 flex justify-end gap-2">
-            <button onClick={() => setDeletingGid(null)} className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
-            <button onClick={() => handleDelete(deletingGid)} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white">Delete</button>
+            <button onClick={() => setDeletingGid(null)} className="cursor-pointer rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-all hover:text-foreground active:scale-95">Cancel</button>
+            <button onClick={() => handleDelete(deletingGid)} className="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-all hover:opacity-90 active:scale-95">Delete</button>
           </div>
         </Modal>
       )}
@@ -324,7 +371,7 @@ function Index() {
       {undoTicket && (
         <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-card px-5 py-3 shadow-lg">
           <span className="text-sm text-foreground">{undoTicket.msg}</span>
-          <button onClick={undoRemove} className="flex items-center gap-1 text-sm font-medium text-primary"><Undo2 className="h-3.5 w-3.5" /> Undo</button>
+          <button onClick={undoRemove} className="flex cursor-pointer items-center gap-1 text-sm font-medium text-primary active:scale-90 transition-transform"><Undo2 className="h-3.5 w-3.5" /> Undo</button>
         </div>
       )}
     </div>
@@ -353,7 +400,7 @@ function GroupFilters({ groups, activeGroupId, onSelect }: { groups: any[]; acti
         <button
           key={g.id}
           onClick={() => onSelect(g.id)}
-          className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+          className={`cursor-pointer rounded-full px-3 py-1.5 text-sm font-medium transition-all active:scale-95 ${
             activeGroupId === g.id
               ? 'bg-primary text-primary-foreground'
               : 'border border-border bg-card text-muted-foreground hover:text-foreground'
@@ -462,7 +509,7 @@ function Header({ marketState, loading, onRefresh }: { marketState: MarketState;
             <span>{status.text}</span>
           </div>
           <button onClick={onRefresh} disabled={loading}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50" title="Manual Refresh">
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-all hover:text-foreground active:scale-90 disabled:opacity-50" title="Manual Refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>

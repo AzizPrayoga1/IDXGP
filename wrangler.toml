@@ -1,0 +1,14 @@
+name = "idxgp"
+compatibility_date = "2025-04-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "idxgp-db"
+database_id = "idxgp-db"
+
+[env.production]
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "idxgp-db"
+database_id = "idxgp-db"

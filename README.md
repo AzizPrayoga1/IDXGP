@@ -16,7 +16,6 @@ Pantau pergerakan harga saham IDX (Indonesia Stock Exchange) secara real-time vi
 ```bash
 # install dependencies
 npm install
-cd frontend && npm install && cd ..
 
 # jalanin local (mock API + frontend)
 npm run dev
@@ -30,29 +29,35 @@ npm run dev
 npm run deploy
 ```
 
+Sebelum deploy pertama:
+```bash
+npx wrangler d1 create idxgp-db
+# copy database_id ke wrangler.toml
+npx wrangler d1 execute --file=migrations/0001_create_tables.sql
+```
+
 Frontend + API (Pages Function) deploy bareng ke Cloudflare Pages. Satu domain, gak perlu Worker pisah.
 
-## Stack
+## Data Sync
 
-Frontend | API | Deploy
----|---|---
-Vite | Cloudflare Pages Functions | Cloudflare Pages
-React 19 | TradingView Scanner API (proxy) | wrangler
-TanStack Router | Edge cache (3s) |
-Tailwind CSS v4 | Input validation |
-Recharts | CORS restricted |
+Groups tersimpan di **localStorage + Cloudflare D1**. Export/Import dari sidebar untuk pindah device.
 
 ## Struktur
 
 ```
 idxgp/
-├── frontend/
-│   ├── functions/api/scan.ts   ← API proxy ke TradingView
-│   ├── src/
-│   │   ├── routes/index.tsx    ← Halaman utama
-│   │   ├── lib/stocks.data.ts  ← Data saham & grup
-│   │   └── index.css           ← Tailwind + theme
-│   └── vite.config.ts
-├── scripts/mock-api.js         ← Mock server lokal
-└── package.json                ← Root scripts
+├── functions/api/
+│   ├── scan.ts            ← API proxy ke TradingView
+│   ├── groups.ts          ← Groups CRUD (D1)
+│   └── user/init.ts       ← User init (D1)
+├── src/
+│   ├── routes/index.tsx    ← Halaman utama
+│   ├── lib/storage.ts      ← Groups + localStorage + D1 sync
+│   ├── lib/stocks.data.ts  ← Data saham & grup
+│   └── index.css           ← Tailwind + theme
+├── scripts/mock-api.cjs   ← Mock server lokal (scan + groups + user)
+├── migrations/            ← D1 schema migration
+├── vite.config.ts
+├── wrangler.toml
+└── package.json
 ```

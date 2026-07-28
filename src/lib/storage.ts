@@ -1,10 +1,73 @@
 const GROUPS_KEY = 'idx-dashboard:v1:groups';
 const PREFS_KEY = 'idx-dashboard:v1:preferences';
+const USER_ID_KEY = 'idxgp:user_id';
+const SYNC_KEY = 'idxgp:sync_ts';
 
 let _idSeq = 0;
 function uid() {
   _idSeq++;
   return `g_${_idSeq}_${Date.now().toString(36)}`;
+}
+
+// ── User ID ──
+export function getUserId(): string {
+  let id = localStorage.getItem(USER_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(USER_ID_KEY, id);
+    initUserOnServer(id);
+  }
+  return id;
+}
+
+async function initUserOnServer(id: string) {
+  try {
+    await fetch('/api/user/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+  } catch {}
+}
+
+// ── Cloud sync ──
+let _syncPending = false;
+
+export async function syncGroupsToCloud(d: GroupsStore): Promise<void> {
+  try {
+    const uid = getUserId();
+    const res = await fetch('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': uid },
+      body: JSON.stringify({ groups: d.groups }),
+    });
+    if (res.ok) localStorage.setItem(SYNC_KEY, Date.now().toString());
+  } catch {}
+}
+
+export async function syncGroupsFromCloud(): Promise<GroupsStore | null> {
+  try {
+    const uid = getUserId();
+    const res = await fetch('/api/groups', {
+      headers: { 'X-User-Id': uid },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.groups && data.groups.length > 0) {
+      // Reconstruct store from cloud data
+      const store: GroupsStore = {
+        version: 1,
+        activeGroupId: data.groups[0]?.id || '__all__',
+        groups: data.groups,
+      };
+      persistGroups(store);
+      localStorage.setItem(SYNC_KEY, Date.now().toString());
+      return store;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export interface Group {
@@ -65,6 +128,7 @@ export function loadGroups(): GroupsStore {
 
 export function persistGroups(d: GroupsStore): void {
   localStorage.setItem(GROUPS_KEY, JSON.stringify(d));
+  syncGroupsToCloud(d);
 }
 
 export function cloneStore(d: GroupsStore): GroupsStore {
