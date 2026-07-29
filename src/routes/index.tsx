@@ -122,7 +122,27 @@ function Index() {
     return activeGroup.tickers.length > 0 ? activeGroup.tickers : all;
   }, [store.activeGroupId, activeGroup]);
 
-  const { marketState, data: liveData, loading, refresh } = useSmartPolling(activeTickers);
+  const { marketState, data: liveData, loading, lastUpdated, refresh, offline, errorStatus, connectionStatus, isInitialLoading } = useSmartPolling(activeTickers);
+
+  // Stale status indicator helper variables
+  const isStale = useMemo(() => {
+    if (!lastUpdated) return false;
+    const diffSeconds = (new Date().getTime() - new Date(lastUpdated).getTime()) / 1000;
+    return diffSeconds > 8;
+  }, [lastUpdated]);
+
+  const [secondsAgo, setSecondsAgo] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (lastUpdated) {
+        setSecondsAgo(Math.round((new Date().getTime() - new Date(lastUpdated).getTime()) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lastUpdated]);
+
+  const showStaleOverlay = offline || connectionStatus === 'disconnected';
 
   const mergedStocks = useMemo(() => {
     return defaultStocks.map(s => {
@@ -150,6 +170,7 @@ function Index() {
 
   // Detect price changes for flash animation
   useEffect(() => {
+    if (marketState === 'MARKET_BREAK') return;
     const newFlash: Record<string, 'up' | 'down' | null> = {};
     for (const s of mergedStocks) {
       const prev = prevPricesRef.current[s.symbol];
@@ -175,7 +196,7 @@ function Index() {
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [mergedStocks]);
+  }, [mergedStocks, marketState]);
 
   const filteredStocks = useMemo(() => {
     let result = mergedStocks;
@@ -325,7 +346,23 @@ function Index() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <Header marketState={marketState} loading={loading} onRefresh={refresh} onLogout={handleLogout} />
+      <Header marketState={marketState} loading={loading} onRefresh={refresh} onLogout={handleLogout} connectionStatus={connectionStatus} />
+
+      {/* Network Offline Toast */}
+      {offline && (
+        <div className="fixed bottom-20 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-red-500/30 bg-red-950/80 px-6 py-4 shadow-xl backdrop-blur-md">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+          <span className="text-sm font-semibold text-red-200">Koneksi terputus — mencoba menyambung ulang...</span>
+        </div>
+      )}
+
+      {/* TV Rate Limited / Down Toast */}
+      {(errorStatus === 429 || (errorStatus && errorStatus >= 500)) && (
+        <div className="fixed bottom-20 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-yellow-500/30 bg-yellow-950/80 px-6 py-4 shadow-xl backdrop-blur-md">
+          <span className="h-2.5 w-2.5 rounded-full bg-yellow-500" />
+          <span className="text-sm font-semibold text-yellow-200">Data provider sedang sibuk, menampilkan data terakhir</span>
+        </div>
+      )}
 
       <div className="mx-auto flex max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:px-8">
         {/* Sidebar */}
@@ -388,9 +425,16 @@ function Index() {
                 <h2 className="font-heading text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
                   {activeGroup?.name || 'All Stocks'}
                 </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {activeGroup ? `${filteredStocks.length} stocks` : 'All available stocks'}
-                </p>
+                <div className="mt-1 flex items-center gap-2">
+                  <p className="text-sm text-muted-foreground">
+                    {activeGroup ? `${filteredStocks.length} stocks` : 'All available stocks'}
+                  </p>
+                  {isStale && (
+                    <span className="rounded-md bg-zinc-800 px-2 py-0.5 text-xs font-semibold text-zinc-400">
+                      Data {secondsAgo} detik lalu
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 {/* Mobile group select */}
@@ -431,29 +475,42 @@ function Index() {
             )}
 
             {/* Stock grid */}
-            <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredStocks.map(stock => (
-                <div key={stock.symbol} className="relative group">
-                  <StockCard key={`${stock.symbol}-${flashSeqRef.current[stock.symbol] || 0}`} stock={stock} flash={flashMap[stock.symbol]} />
-                  {/* Remove button for custom groups */}
-                  {isCustom && (
-                    <button
-                      onClick={() => removeTicker(activeGroup!.id, stock.symbol)}
-                      className="absolute right-2 top-2 rounded-full bg-card/80 p-1 text-muted-foreground opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
-                      title={`Remove ${stock.symbol}`}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-              {filteredStocks.length === 0 && (
-                <div className="col-span-full rounded-2xl border border-border bg-card py-16 text-center">
-                  <p className="text-muted-foreground">No stocks in this group.</p>
-                  {isCustom && <p className="mt-2 text-xs text-muted-foreground">Add tickers using the input above.</p>}
-                </div>
-              )}
-            </div>
+            {isInitialLoading ? (
+              <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: activeTickers.length || 6 }).map((_, i) => (
+                  <SkeletonCard key={i} />
+                ))}
+              </div>
+            ) : (
+              <div className={`mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 transition-opacity duration-300 ${showStaleOverlay ? 'opacity-60' : ''}`}>
+                {filteredStocks.map(stock => (
+                  <div key={stock.symbol} className="relative group">
+                    <StockCard key={`${stock.symbol}-${flashSeqRef.current[stock.symbol] || 0}`} stock={stock} flash={flashMap[stock.symbol]} />
+                    {showStaleOverlay && (
+                      <div className="absolute top-2 left-2 z-10 rounded bg-red-600/80 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                        Stale Data
+                      </div>
+                    )}
+                    {/* Remove button for custom groups */}
+                    {isCustom && (
+                      <button
+                        onClick={() => removeTicker(activeGroup!.id, stock.symbol)}
+                        className="absolute right-2 top-2 rounded-full bg-card/80 p-1 text-muted-foreground opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                        title={`Remove ${stock.symbol}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {filteredStocks.length === 0 && (
+                  <div className="col-span-full rounded-2xl border border-border bg-card py-16 text-center">
+                    <p className="text-muted-foreground">No stocks in this group.</p>
+                    {isCustom && <p className="mt-2 text-xs text-muted-foreground">Add tickers using the input above.</p>}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           {store.activeGroupId === '__all__' && (
@@ -542,6 +599,41 @@ function GroupFilters({ groups, activeGroupId, onSelect }: { groups: any[]; acti
   );
 }
 
+/* ── Skeleton loader component ── */
+function SkeletonCard() {
+  return (
+    <div className="flex flex-col rounded-2xl border border-border bg-card p-5 animate-pulse">
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-lg bg-zinc-800" />
+          <div className="space-y-2">
+            <div className="h-4 w-16 rounded bg-zinc-800" />
+            <div className="h-3 w-28 rounded bg-zinc-800" />
+          </div>
+        </div>
+      </div>
+      <div className="mt-5 flex items-end justify-between">
+        <div className="space-y-2">
+          <div className="h-7 w-24 rounded bg-zinc-800" />
+          <div className="h-3 w-16 rounded bg-zinc-800" />
+        </div>
+        <div className="h-6 w-16 rounded-full bg-zinc-800" />
+      </div>
+      <div className="mt-4 h-20 w-full rounded bg-zinc-800/50" />
+      <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4">
+        <div className="space-y-1">
+          <div className="h-3 w-10 rounded bg-zinc-800" />
+          <div className="h-4 w-16 rounded bg-zinc-800" />
+        </div>
+        <div className="space-y-1">
+          <div className="h-3 w-10 rounded bg-zinc-800" />
+          <div className="h-4 w-16 rounded bg-zinc-800" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Stock card ── */
 function StockCard({ stock, flash }: { stock: Stock; flash?: string | null }) {
   const isPositive = stock.changePercent >= 0;
@@ -617,15 +709,34 @@ function StockCard({ stock, flash }: { stock: Stock; flash?: string | null }) {
 }
 
 /* ── Header ── */
-function Header({ marketState, loading, onRefresh, onLogout }: { marketState: MarketState; loading: boolean; onRefresh: () => void; onLogout?: () => void }) {
+function Header({ marketState, loading, onRefresh, onLogout, connectionStatus }: { marketState: MarketState; loading: boolean; onRefresh: () => void; onLogout?: () => void; connectionStatus?: 'connected' | 'reconnecting' | 'disconnected' }) {
   const getStatusDetails = () => {
     switch (marketState) {
-      case 'MARKET_OPEN': return { color: 'bg-emerald-500', text: 'Market Open', pulse: true };
-      case 'MARKET_BREAK': return { color: 'bg-amber-500', text: 'Market Break', pulse: false };
-      case 'MARKET_CLOSED': default: return { color: 'bg-rose-500', text: 'Market Closed', pulse: false };
+      case 'MARKET_OPEN': return { color: 'bg-emerald-500', text: 'Market Open', pulse: true, icon: '' };
+      case 'MARKET_BREAK': return { color: 'bg-amber-500', text: 'Market Break', pulse: false, icon: '' };
+      case 'MARKET_CLOSED': default: return { color: 'bg-rose-500', text: 'Market Closed', pulse: false, icon: '' };
     }
   };
   const status = getStatusDetails();
+
+  const getProxyColor = () => {
+    switch (connectionStatus) {
+      case 'connected': return 'bg-emerald-500';
+      case 'reconnecting': return 'bg-amber-500';
+      case 'disconnected': return 'bg-rose-500';
+      default: return 'bg-emerald-500';
+    }
+  };
+
+  const getProxyText = () => {
+    switch (connectionStatus) {
+      case 'connected': return 'Proxy Connected';
+      case 'reconnecting': return 'Proxy Reconnecting';
+      case 'disconnected': return 'Proxy Disconnected';
+      default: return 'Proxy Connected';
+    }
+  };
+
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -639,7 +750,14 @@ function Header({ marketState, loading, onRefresh, onLogout }: { marketState: Ma
           <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground">
             <span className={`h-2 w-2 rounded-full ${status.color} ${status.pulse ? 'animate-pulse' : ''}`} />
             <span>{status.text}</span>
+            <span className="ml-1 text-[10px]">{status.icon}</span>
           </div>
+          {connectionStatus && (
+            <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground">
+              <span className={`h-2 w-2 rounded-full ${getProxyColor()} ${connectionStatus === 'reconnecting' ? 'animate-pulse' : ''}`} />
+              <span>{getProxyText()}</span>
+            </div>
+          )}
           <button onClick={onRefresh} disabled={loading}
             className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-all hover:text-foreground active:scale-90 disabled:opacity-50" title="Manual Refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />

@@ -26,22 +26,22 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
     } catch (e) {}
     return null;
   });
+
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'disconnected'>('connected');
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [currentInterval, setCurrentInterval] = useState(pollingInterval);
+
   const timeoutRef = useRef<any>(null);
   const isFetchingRef = useRef(false);
   const tickersRef = useRef(tickers);
+  const firstErrorTimeRef = useRef<number | null>(null);
 
   // Sync tickers to ref to avoid effect trigger on tickers reference change
   useEffect(() => {
     tickersRef.current = tickers;
   }, [tickers]);
-
-  // Tick to update market state
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setMarketState(getMarketState());
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   const fetchData = useCallback(async () => {
     const currentTickers = tickersRef.current;
@@ -63,6 +63,11 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
         setData(freshData);
         const now = new Date();
         setLastUpdated(now);
+        setErrorStatus(null);
+        setCurrentInterval(pollingInterval);
+        setIsInitialLoading(false);
+        firstErrorTimeRef.current = null;
+        setConnectionStatus('connected');
         try {
           localStorage.setItem('idxgp:last_market_data', JSON.stringify({
             timestamp: now.toISOString(),
@@ -71,18 +76,68 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
         } catch (e) {
           console.error('Failed to cache market data:', e);
         }
+      } else {
+        setErrorStatus(res.status);
+        if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+          setCurrentInterval(prev => Math.min(prev * 2, 16000));
+        }
       }
     } catch (err) {
       console.error('Polling fetch failed:', err);
+      setErrorStatus(500);
+      setCurrentInterval(prev => Math.min(prev * 2, 16000));
     } finally {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, []);
+  }, [pollingInterval]);
+
+  // Tick to update market state and connection status
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setMarketState(getMarketState());
+
+      // Update connection status
+      const isOffline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
+      const hasError = isOffline || errorStatus !== null;
+      if (hasError) {
+        if (firstErrorTimeRef.current === null) {
+          firstErrorTimeRef.current = Date.now();
+        }
+        const elapsed = Date.now() - firstErrorTimeRef.current;
+        if (elapsed > 60000) {
+          setConnectionStatus('disconnected');
+        } else {
+          setConnectionStatus('reconnecting');
+        }
+      } else {
+        firstErrorTimeRef.current = null;
+        setConnectionStatus('connected');
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [errorStatus]);
+
+  // Listen for online/offline events
+  useEffect(() => {
+    const handleOnline = () => {
+      setOffline(false);
+      fetchData();
+    };
+    const handleOffline = () => {
+      setOffline(true);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [fetchData]);
 
   // Set up polling interval loop
   useEffect(() => {
-    if (marketState !== 'MARKET_OPEN') {
+    if (marketState !== 'MARKET_OPEN' || offline) {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       return;
     }
@@ -91,7 +146,7 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
       if (document.visibilityState === 'visible') {
         await fetchData();
       }
-      timeoutRef.current = setTimeout(poll, pollingInterval);
+      timeoutRef.current = setTimeout(poll, currentInterval);
     };
 
     poll();
@@ -99,7 +154,7 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
-  }, [marketState, fetchData, pollingInterval]);
+  }, [marketState, offline, fetchData, currentInterval]);
 
   // Visibility change listener
   useEffect(() => {
@@ -123,8 +178,9 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
 
   // Fetch immediately on tickers change
   useEffect(() => {
+    setIsInitialLoading(true);
     fetchData();
   }, [tickers, fetchData]);
 
-  return { marketState, data, loading, lastUpdated, refresh };
+  return { marketState, data, loading, lastUpdated, refresh, offline, errorStatus, connectionStatus, isInitialLoading };
 }
