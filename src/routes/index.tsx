@@ -35,6 +35,11 @@ function Index() {
   const [tickerError, setTickerError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Flash animation state ──
+  const prevPricesRef = useRef<Record<string, number>>({});
+  const flashSeqRef = useRef<Record<string, number>>({});
+  const [flashMap, setFlashMap] = useState<Record<string, 'up' | 'down' | null>>({});
+
   // ── Password auth state ──
   const [pwMode, setPwMode] = useState<'setup' | 'unlock' | null>(null);
   const [pwInput, setPwInput] = useState("");
@@ -142,6 +147,35 @@ function Index() {
       return s;
     });
   }, [liveData]);
+
+  // Detect price changes for flash animation
+  useEffect(() => {
+    const newFlash: Record<string, 'up' | 'down' | null> = {};
+    for (const s of mergedStocks) {
+      const prev = prevPricesRef.current[s.symbol];
+      if (prev !== undefined && prev !== s.price) {
+        newFlash[s.symbol] = s.price > prev ? 'up' : 'down';
+      }
+      prevPricesRef.current[s.symbol] = s.price;
+    }
+    if (Object.keys(newFlash).length > 0) {
+      setFlashMap(prev => ({ ...prev, ...newFlash }));
+      // Bump sequence number to force React re-key
+      const seq = { ...flashSeqRef.current };
+      Object.keys(newFlash).forEach(k => { seq[k] = (seq[k] || 0) + 1; });
+      flashSeqRef.current = seq;
+      // Clear flash after animation completes
+      const keys = Object.keys(newFlash);
+      const timer = setTimeout(() => {
+        setFlashMap(prev => {
+          const next = { ...prev };
+          keys.forEach(k => { next[k] = null; });
+          return next;
+        });
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [mergedStocks]);
 
   const filteredStocks = useMemo(() => {
     let result = mergedStocks;
@@ -400,7 +434,7 @@ function Index() {
             <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredStocks.map(stock => (
                 <div key={stock.symbol} className="relative group">
-                  <StockCard stock={stock} />
+                  <StockCard key={`${stock.symbol}-${flashSeqRef.current[stock.symbol] || 0}`} stock={stock} flash={flashMap[stock.symbol]} />
                   {/* Remove button for custom groups */}
                   {isCustom && (
                     <button
@@ -509,16 +543,17 @@ function GroupFilters({ groups, activeGroupId, onSelect }: { groups: any[]; acti
 }
 
 /* ── Stock card ── */
-function StockCard({ stock }: { stock: Stock }) {
+function StockCard({ stock, flash }: { stock: Stock; flash?: string | null }) {
   const isPositive = stock.changePercent >= 0;
   const isUnchanged = stock.changePercent === 0;
   const chartColor = isUnchanged ? '#6B7280' : isPositive ? '#22c55e' : '#ef4444';
   const changeColor = isUnchanged ? 'text-yellow-500' : isPositive ? 'text-emerald-400' : 'text-red-400';
   const changeBg = isUnchanged ? 'bg-yellow-500/10' : isPositive ? 'bg-emerald-500/10' : 'bg-red-500/10';
   const chartData = stock.sparkline.map((value, i) => ({ i, value }));
+  const flashClass = flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : '';
 
   return (
-    <div className="group flex flex-col rounded-2xl border border-border bg-card p-5 transition-all hover:border-primary/30 hover:bg-card/80">
+    <div className={`group flex flex-col rounded-2xl border border-border bg-card p-5 transition-all hover:border-primary/30 hover:bg-card/80 ${flashClass}`}>
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted font-heading text-sm font-bold text-foreground">
