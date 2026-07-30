@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowDown, ArrowUp, LayoutGrid, Search, TrendingDown, TrendingUp, Plus, X, Edit3, Trash2, Undo2, ChevronRight, ListFilter, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, LayoutGrid, Search, TrendingDown, TrendingUp, Plus, X, Edit3, Trash2, Undo2, ChevronRight, ListFilter, RefreshCw, Copy, Check } from "lucide-react";
 
 import { stocks as defaultStocks, marketIndices, type Stock, formatCompactNumber, formatVolume } from "@/lib/stocks.data";
 import { useSmartPolling } from "@/hooks/useSmartPolling";
@@ -45,6 +45,9 @@ function Index() {
   const [pwInput, setPwInput] = useState("");
   const [pwError, setPwError] = useState("");
   const [authDone, setAuthDone] = useState(() => isPinVerified());
+  const [syncIdMode, setSyncIdMode] = useState(false);
+  const [syncIdInput, setSyncIdInput] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const storeRef = useRef(store);
   storeRef.current = store;
@@ -313,6 +316,52 @@ function Index() {
 
   // ── Password overlay ──
   if (pwMode) {
+    if (syncIdMode) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 shadow-xl">
+            <div className="mb-6 text-center">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                <TrendingUp className="h-6 w-6" />
+              </div>
+              <h1 className="font-heading text-xl font-bold text-foreground">IDXGP Sync</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Masukkan Sync ID perangkat utama Anda untuk sinkronisasi data bursa
+              </p>
+            </div>
+            <input
+              type="text"
+              autoFocus
+              value={syncIdInput}
+              onChange={e => { setSyncIdInput(e.target.value); setPwError(""); }}
+              placeholder="Masukkan Sync ID"
+              className="w-full rounded-lg border border-border bg-card px-4 py-3 text-center text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            {pwError && <p className="mt-2 text-center text-sm text-red-400">{pwError}</p>}
+            <button
+              onClick={() => {
+                const sId = syncIdInput.trim();
+                if (sId.length < 10) { setPwError('Sync ID tidak valid'); return; }
+                localStorage.setItem('idxgp:user_id', sId);
+                setSyncIdMode(false);
+                setPwMode('unlock');
+                setPwError("");
+              }}
+              className="mt-4 w-full cursor-pointer rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:opacity-90 active:scale-[0.98]"
+            >
+              Hubungkan Perangkat
+            </button>
+            <button
+              onClick={() => { setSyncIdMode(false); setPwError(""); }}
+              className="mt-2 w-full cursor-pointer rounded-lg border border-border bg-card px-4 py-2 text-xs text-muted-foreground transition-all hover:text-foreground"
+            >
+              Kembali
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 shadow-xl">
@@ -338,6 +387,12 @@ function Index() {
           {pwError && <p className="mt-2 text-center text-sm text-red-400">{pwError}</p>}
           <button onClick={handlePwSubmit} className="mt-4 w-full cursor-pointer rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-all hover:opacity-90 active:scale-[0.98]">
             {pwMode === 'setup' ? 'Set Password' : 'Unlock'}
+          </button>
+          <button
+            onClick={() => { setSyncIdMode(true); setPwError(""); }}
+            className="mt-3 w-full text-center text-xs font-medium text-primary hover:underline cursor-pointer"
+          >
+            Hubungkan dengan Perangkat Lain (Sync ID)
           </button>
         </div>
       </div>
@@ -401,8 +456,31 @@ function Index() {
                 )}
               </div>
             ))}
-            <div className="mt-6 flex flex-col gap-1 border-t border-border pt-4">
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Sync</span>
+            <div className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Sync Device</span>
+
+              <div className="flex flex-col gap-1 rounded-lg bg-muted/20 border border-border/40 p-2">
+                <span className="text-[9px] text-muted-foreground leading-tight">
+                  Salin ID ini ke perangkat baru untuk sinkronisasi watchlist:
+                </span>
+                <div className="flex items-center gap-1 mt-1 justify-between">
+                  <span className="text-[10px] text-foreground font-mono truncate max-w-[130px] select-all">
+                    {getUserId()}
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(getUserId());
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="p-1 rounded bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer transition-all"
+                    title="Salin Sync ID"
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+              </div>
+
               <button onClick={exportGroups} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-all hover:bg-muted/40 hover:text-foreground active:scale-[0.98]">Export Groups</button>
               <button onClick={() => fileInputRef.current?.click()} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-all hover:bg-muted/40 hover:text-foreground active:scale-[0.98]">Import Groups</button>
               <input ref={fileInputRef} type="file" accept=".json" onChange={importGroups} className="hidden" />
