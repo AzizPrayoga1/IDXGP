@@ -64,7 +64,7 @@ export async function onRequest(context) {
     if (body.tickers.length > 100)
       return json({ error: 'Ticker list exceeds maximum of 100' }, 400, corsHeaders);
 
-    const tickerRegex = /^[A-Z]{4}$/;
+    const tickerRegex = /^([A-Z]{4}|COMPOSITE|LQ45|IDX30)$/;
     for (const t of body.tickers) {
       if (!tickerRegex.test(t))
         return json({ error: `Invalid ticker: ${t}` }, 400, corsHeaders);
@@ -90,6 +90,11 @@ export async function onRequest(context) {
     }
 
     // --- Forward to TradingView Scanner API ---
+    const tvPayload = {
+      symbols: { tickers: body.tickers.map(t => `IDX:${t}`) },
+      columns: body.columns,
+    };
+
     const tvResp = await fetch('https://scanner.tradingview.com/indonesia/scan', {
       method: 'POST',
       headers: {
@@ -97,12 +102,7 @@ export async function onRequest(context) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Origin': 'https://idx-dashboard.pages.dev',
       },
-      body: JSON.stringify({
-        filter: [{ left: 'name', operation: 'in_range', right: body.tickers }],
-        columns: body.columns,
-        sort: { sortBy: 'name', sortOrder: 'asc' },
-        range: [0, Math.min(body.tickers.length, 100)],
-      }),
+      body: JSON.stringify(tvPayload),
     });
 
     if (!tvResp.ok) {

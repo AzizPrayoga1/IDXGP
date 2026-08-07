@@ -49,11 +49,13 @@ export function useSmartPolling(tickers: string[], pollingInterval = 4000) {
     isFetchingRef.current = true;
     setLoading(true);
     try {
+      // Ensure market indices are included in real-time scan requests
+      const scanTickers = Array.from(new Set([...currentTickers, 'COMPOSITE', 'LQ45', 'IDX30']));
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tickers: currentTickers,
+          tickers: scanTickers,
           columns: ['close', 'change', 'change_abs', 'volume', 'high', 'low', 'Recommend.All']
         })
       });

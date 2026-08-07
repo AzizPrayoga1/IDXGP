@@ -75,10 +75,8 @@ function mapRating(value) {
 function fetchTradingView(tickers, columns) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({
-      filter: [{ left: 'name', operation: 'in_range', right: tickers }],
-      columns: columns || ['close', 'change', 'change_abs', 'volume', 'high', 'low', 'Recommend.All'],
-      sort: { sortBy: 'name', sortOrder: 'asc' },
-      range: [0, Math.min(tickers.length, 100)]
+      symbols: { tickers: tickers.map(t => `IDX:${t}`) },
+      columns: columns || ['close', 'change', 'change_abs', 'volume', 'high', 'low', 'Recommend.All']
     });
 
     const req = https.request('https://scanner.tradingview.com/indonesia/scan', {
@@ -144,7 +142,7 @@ async function handleScan(req, res) {
   const data = await parseBody(req);
   if (!data || !Array.isArray(data.tickers)) return json(res, { error: 'Invalid ticker list' }, 400);
 
-  const tickerRegex = /^[A-Z]{4}$/;
+  const tickerRegex = /^([A-Z]{4}|COMPOSITE|LQ45|IDX30)$/;
   const validTickers = data.tickers.filter(t => tickerRegex.test(t));
 
   try {
