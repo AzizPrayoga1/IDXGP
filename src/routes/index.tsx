@@ -53,6 +53,7 @@ function Index() {
   const [syncIdMode, setSyncIdMode] = useState(false);
   const [syncIdInput, setSyncIdInput] = useState("");
   const [copied, setCopied] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
 
   // ── Corporate Actions state ──
   const [events, setEvents] = useState<CorporateAction[]>(mockCorporateActions);
@@ -544,24 +545,34 @@ function Index() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 <button
                   onClick={() => setShowCalendarModal(true)}
-                  className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground transition-all hover:border-primary/50 hover:bg-muted/50 active:scale-95"
+                  className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-xs font-medium text-foreground transition-all hover:border-primary/50 hover:bg-muted/50 active:scale-95"
                   title="Agenda Aksi Korporasi & Dividen"
                 >
-                  <Calendar className="h-4 w-4 text-primary" />
-                  <span className="hidden sm:inline">Kalender Korporasi</span>
+                  <Calendar className="h-4 w-4 text-primary shrink-0" />
+                  <span className="inline">Kalender</span>
+                </button>
+                <button
+                  onClick={() => setShowSyncModal(true)}
+                  className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-2 text-xs font-medium text-foreground transition-all hover:border-primary/50 hover:bg-muted/50 active:scale-95 lg:hidden"
+                  title="Lihat Sync ID"
+                >
+                  <Copy className="h-4 w-4 text-primary shrink-0" />
+                  <span>Sync ID</span>
                 </button>
                 {/* Mobile group select */}
                 <select
                   value={store.activeGroupId}
                   onChange={e => { const s = cloneStore(storeRef.current); persist({ ...s, activeGroupId: e.target.value }); }}
-                  className="block w-44 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground lg:hidden"
+                  className="block flex-1 sm:w-44 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground lg:hidden min-w-[120px]"
                 >
                   {store.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                 </select>
-                <SearchBar value={searchQuery} onChange={setSearchQuery} />
+                <div className="w-full sm:w-auto">
+                  <SearchBar value={searchQuery} onChange={setSearchQuery} />
+                </div>
               </div>
             </div>
 
@@ -744,6 +755,31 @@ function Index() {
         </Modal>
       )}
 
+      {/* Sync ID Modal (Mobile) */}
+      {showSyncModal && (
+        <Modal title="Sync Device ID" onClose={() => setShowSyncModal(false)}>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Salin ID di bawah ini dan tempel di perangkat lain saat membuka aplikasi untuk menyelaraskan grup dan watchlist Anda.
+            </p>
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/30 p-3">
+              <span className="min-w-0 flex-1 font-mono text-xs text-foreground truncate select-all">{getUserId()}</span>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(getUserId());
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                className="flex cursor-pointer items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-all hover:opacity-90 active:scale-95 shrink-0"
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                <span>{copied ? 'Tersalin' : 'Salin'}</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* Undo toast */}
       {undoTicket && (
         <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-card px-5 py-3 shadow-lg">
@@ -758,10 +794,10 @@ function Index() {
 /* ── Modal wrapper ── */
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-xl" onClick={e => e.stopPropagation()}>
-        <h3 className="mb-4 font-heading text-lg font-bold text-foreground">{title}</h3>
-        {children}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-sm max-h-[90vh] flex flex-col rounded-2xl border border-border bg-card p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="mb-4 font-heading text-lg font-bold text-foreground shrink-0">{title}</h3>
+        <div className="overflow-y-auto min-h-0">{children}</div>
       </div>
     </div>
   );
@@ -943,39 +979,39 @@ function Header({ marketState, loading, onRefresh, onLogout, connectionStatus }:
 
   const getProxyText = () => {
     switch (connectionStatus) {
-      case 'connected': return 'Proxy Connected';
-      case 'reconnecting': return 'Proxy Reconnecting';
-      case 'disconnected': return 'Proxy Disconnected';
-      default: return 'Proxy Connected';
+      case 'connected': return 'Proxy OK';
+      case 'reconnecting': return 'Reconnecting';
+      case 'disconnected': return 'Disconnected';
+      default: return 'Proxy OK';
     }
   };
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground glow-ember">
-            <TrendingUp className="h-5 w-5" />
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground glow-ember">
+            <TrendingUp className="h-4 w-4 sm:h-5 sm:w-5" />
           </div>
-          <span className="font-heading text-lg font-bold tracking-tight">IDXGP</span>
+          <span className="font-heading text-base sm:text-lg font-bold tracking-tight">IDXGP</span>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground">
+        <div className="flex items-center gap-1.5 sm:gap-4">
+          <div className="flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] sm:text-xs font-medium text-foreground">
             <span className={`h-2 w-2 rounded-full ${status.color} ${status.pulse ? 'animate-pulse' : ''}`} />
-            <span>{status.text}</span>
-            <span className="ml-1 text-[10px]">{status.icon}</span>
+            <span className="hidden xs:inline">{status.text}</span>
+            <span className="xs:hidden">{status.text.split(' ')[1] || status.text}</span>
           </div>
           {connectionStatus && (
-            <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground">
+            <div className="hidden md:flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground">
               <span className={`h-2 w-2 rounded-full ${getProxyColor()} ${connectionStatus === 'reconnecting' ? 'animate-pulse' : ''}`} />
               <span>{getProxyText()}</span>
             </div>
           )}
           <button onClick={onRefresh} disabled={loading}
-            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-all hover:text-foreground active:scale-90 disabled:opacity-50" title="Manual Refresh">
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            className="flex h-8 w-8 sm:h-9 sm:w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-card text-muted-foreground transition-all hover:text-foreground active:scale-90 disabled:opacity-50" title="Manual Refresh">
+            <RefreshCw className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          {onLogout && <button onClick={onLogout} className="flex h-9 cursor-pointer items-center gap-1 rounded-lg border border-border bg-card px-3 text-xs text-muted-foreground transition-all hover:text-foreground active:scale-90" title="Lock">Lock</button>}
+          {onLogout && <button onClick={onLogout} className="flex h-8 sm:h-9 cursor-pointer items-center gap-1 rounded-lg border border-border bg-card px-2.5 sm:px-3 text-xs text-muted-foreground transition-all hover:text-foreground active:scale-90" title="Lock">Lock</button>}
         </div>
       </div>
     </header>
