@@ -9,3 +9,4 @@ scripts/mock-closing-prices.json
 .cache/
 .claude/
 .DS_Store
+konteks.md

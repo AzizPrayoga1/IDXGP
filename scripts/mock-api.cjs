@@ -109,6 +109,37 @@ function fetchTradingView(tickers, columns) {
 
 // ── Route handlers ──
 
+async function handleEvents(req, res) {
+  let tickers = [];
+  if (req.method === 'POST') {
+    const data = await parseBody(req);
+    if (data && Array.isArray(data.tickers)) tickers = data.tickers;
+  } else if (req.method === 'GET') {
+    const u = new URL(req.url, `http://${req.headers.host}`);
+    const q = u.searchParams.get('tickers');
+    if (q) tickers = q.split(',').map(s => s.trim());
+  }
+
+  const mockEvents = [
+    { id: 'ca_bbca_div_1', symbol: 'BBCA', type: 'DIVIDEND', title: 'Dividen Interim 2026', cumDate: '2026-08-15', exDate: '2026-08-18', recordingDate: '2026-08-19', paymentDate: '2026-09-02', cashDividend: 50, dividendYield: 0.78, details: 'Dividen interim tunai untuk tahun buku 2026' },
+    { id: 'ca_bbri_div_1', symbol: 'BBRI', type: 'DIVIDEND', title: 'Dividen Tunai Interim', cumDate: '2026-08-20', exDate: '2026-08-21', recordingDate: '2026-08-24', paymentDate: '2026-09-05', cashDividend: 85, dividendYield: 2.71, details: 'Pembayaran dividen interim semester 1' },
+    { id: 'ca_tlkm_rups_1', symbol: 'TLKM', type: 'RUPS', title: 'RUPSLB 2026', eventDate: '2026-08-25', location: 'Telkom Landmark Tower, Jakarta', details: 'Persetujuan perubahan susunan pengurus perseroan & rencana aksi korporasi' },
+    { id: 'ca_asii_div_1', symbol: 'ASII', type: 'DIVIDEND', title: 'Dividen Interim 2026', cumDate: '2026-08-28', exDate: '2026-08-29', recordingDate: '2026-09-01', paymentDate: '2026-09-15', cashDividend: 98, dividendYield: 1.91, details: 'Dividen interim per saham Rp 98' },
+    { id: 'ca_bmri_rups_1', symbol: 'BMRI', type: 'RUPS', title: 'RUPST Tahun Buku 2025', eventDate: '2026-09-04', location: 'Plaza Mandiri, Jakarta', details: 'Persetujuan Laporan Tahunan dan Penetapan Penggunaan Laba Bersih' },
+    { id: 'ca_icbp_div_1', symbol: 'ICBP', type: 'DIVIDEND', title: 'Dividen Final 2025', cumDate: '2026-08-12', exDate: '2026-08-13', recordingDate: '2026-08-14', paymentDate: '2026-08-28', cashDividend: 215, dividendYield: 2.79, details: 'Dividen final tunai tahun buku 2025' },
+    { id: 'ca_itmg_div_1', symbol: 'ITMG', type: 'DIVIDEND', title: 'Dividen Tunai Interim 2026', cumDate: '2026-09-10', exDate: '2026-09-11', recordingDate: '2026-09-14', paymentDate: '2026-09-25', cashDividend: 1250, dividendYield: 5.04, details: 'Dividen interim bernilai jumbo per saham Rp 1.250' },
+    { id: 'ca_goto_rups_1', symbol: 'GOTO', type: 'RUPS', title: 'RUPSLB Rencana Buyback', eventDate: '2026-08-30', location: 'Pasar Minggu, Jakarta Selatan', details: 'Persetujuan alokasi dana buyback saham periode 2026-2027' }
+  ];
+
+  let filtered = mockEvents;
+  if (tickers.length > 0) {
+    const set = new Set(tickers.map(t => t.toUpperCase()));
+    filtered = mockEvents.filter(e => set.has(e.symbol));
+  }
+
+  return json(res, { timestamp: new Date().toISOString(), events: filtered });
+}
+
 async function handleScan(req, res) {
   const data = await parseBody(req);
   if (!data || !Array.isArray(data.tickers)) return json(res, { error: 'Invalid ticker list' }, 400);
@@ -212,6 +243,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.url.startsWith('/api/scan') && req.method === 'POST') return handleScan(req, res);
+  if (req.url.startsWith('/api/events')) return handleEvents(req, res);
   if (req.url === '/api/user/init') return handleUserInit(req, res);
   if (req.url === '/api/auth/verify') return handleAuthVerify(req, res);
   if (req.url === '/api/groups') return handleGroups(req, res);

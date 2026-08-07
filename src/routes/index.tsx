@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowDown, ArrowUp, LayoutGrid, Search, TrendingDown, TrendingUp, Plus, X, Edit3, Trash2, Undo2, ChevronRight, ListFilter, RefreshCw, Copy, Check } from "lucide-react";
+import { ArrowDown, ArrowUp, LayoutGrid, Search, TrendingDown, TrendingUp, Plus, X, Edit3, Trash2, Undo2, ChevronRight, ListFilter, RefreshCw, Copy, Check, Calendar, DollarSign, Users, Info } from "lucide-react";
 
 import { stocks as defaultStocks, marketIndices, type Stock, formatCompactNumber, formatVolume } from "@/lib/stocks.data";
+import { mockCorporateActions, type CorporateAction } from "@/lib/corporate-action.data";
 import { useSmartPolling } from "@/hooks/useSmartPolling";
 import { getMarketState, type MarketState } from "@/lib/market-hours";
 import { loadGroups, persistGroups, addGroup, renameGroup, deleteGroup, groupAddTicker, groupRemoveTicker, cloneStore, syncGroupsFromCloud, getUserId, isPinVerified, registerUser, verifyPin, markPinVerified, clearSession, type GroupsStore } from "@/lib/storage";
@@ -52,6 +53,11 @@ function Index() {
   const [syncIdMode, setSyncIdMode] = useState(false);
   const [syncIdInput, setSyncIdInput] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // ── Corporate Actions state ──
+  const [events, setEvents] = useState<CorporateAction[]>(mockCorporateActions);
+  const [selectedStockEvents, setSelectedStockEvents] = useState<{ symbol: string; actions: CorporateAction[] } | null>(null);
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
 
   const storeRef = useRef(store);
   storeRef.current = store;
@@ -103,21 +109,16 @@ function Index() {
     setAuthDone(false);
   };
 
-  // Load from cloud on mount (merge with local)
+  // Fetch corporate actions from API
   useEffect(() => {
-    syncGroupsFromCloud().then(cloud => {
-      if (cloud) {
-        // Merge: cloud wins, but keep local activeGroupId if groups structure matches
-        setStore(prev => {
-          const merged = cloneStore(cloud);
-          // Try to keep local activeGroupId if it still exists in cloud data
-          if (prev.groups.some(g => g.id === prev.activeGroupId) && cloud.groups.some(g => g.id === prev.activeGroupId)) {
-            merged.activeGroupId = prev.activeGroupId;
-          }
-          return merged;
-        });
-      }
-    });
+    fetch('/api/events')
+      .then(res => res.json())
+      .then(data => {
+        if (data.events && Array.isArray(data.events)) {
+          setEvents(data.events);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const activeGroup = store.groups.find(g => g.id === store.activeGroupId);
@@ -544,6 +545,14 @@ function Index() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowCalendarModal(true)}
+                  className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground transition-all hover:border-primary/50 hover:bg-muted/50 active:scale-95"
+                  title="Agenda Aksi Korporasi & Dividen"
+                >
+                  <Calendar className="h-4 w-4 text-primary" />
+                  <span className="hidden sm:inline">Kalender Korporasi</span>
+                </button>
                 {/* Mobile group select */}
                 <select
                   value={store.activeGroupId}
@@ -592,7 +601,13 @@ function Index() {
               <div className={`mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 transition-opacity duration-300 ${showStaleOverlay ? 'opacity-60' : ''}`}>
                 {filteredStocks.map(stock => (
                   <div key={stock.symbol} className="relative group">
-                    <StockCard key={`${stock.symbol}-${flashSeqRef.current[stock.symbol] || 0}`} stock={stock} flash={flashMap[stock.symbol]} />
+                    <StockCard
+                      key={`${stock.symbol}-${flashSeqRef.current[stock.symbol] || 0}`}
+                      stock={stock}
+                      flash={flashMap[stock.symbol]}
+                      events={events.filter(e => e.symbol === stock.symbol)}
+                      onViewEvents={(symbol, actions) => setSelectedStockEvents({ symbol, actions })}
+                    />
                     {showStaleOverlay && (
                       <div className="absolute top-2 left-2 z-10 rounded bg-red-600/80 px-2 py-0.5 text-[10px] font-bold text-white shadow">
                         Stale Data
@@ -658,6 +673,73 @@ function Index() {
           <div className="mt-4 flex justify-end gap-2">
             <button onClick={() => setDeletingGid(null)} className="cursor-pointer rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground transition-all hover:text-foreground active:scale-95">Cancel</button>
             <button onClick={() => handleDelete(deletingGid)} className="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-all hover:opacity-90 active:scale-95">Delete</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Stock Corporate Action Modal */}
+      {selectedStockEvents && (
+        <Modal title={`Aksi Korporasi — ${selectedStockEvents.symbol}`} onClose={() => setSelectedStockEvents(null)}>
+          <div className="max-h-96 overflow-y-auto space-y-3">
+            {selectedStockEvents.actions.map(act => (
+              <div key={act.id} className="rounded-xl border border-border bg-muted/20 p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${act.type === 'DIVIDEND' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                    {act.type}
+                  </span>
+                  {act.cumDate && <span className="text-xs text-muted-foreground">Cum: {act.cumDate}</span>}
+                  {act.eventDate && <span className="text-xs text-muted-foreground">Tgl: {act.eventDate}</span>}
+                </div>
+                <h4 className="font-heading text-sm font-bold text-foreground">{act.title}</h4>
+                <p className="text-xs text-muted-foreground">{act.details}</p>
+                {act.cashDividend && (
+                  <div className="flex items-center justify-between border-t border-border/40 pt-2 text-xs">
+                    <span className="text-muted-foreground">Dividen / Saham:</span>
+                    <span className="font-bold text-emerald-400">Rp {act.cashDividend.toLocaleString('id-ID')} (Yield ~{act.dividendYield}%)</span>
+                  </div>
+                )}
+                {act.location && (
+                  <div className="text-xs text-muted-foreground border-t border-border/40 pt-2">
+                    📍 {act.location}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
+
+      {/* Full Corporate Action Calendar Modal */}
+      {showCalendarModal && (
+        <Modal title="Agenda Aksi Korporasi & Dividen IDX" onClose={() => setShowCalendarModal(false)}>
+          <div className="max-h-[70vh] overflow-y-auto space-y-3 pr-1">
+            {events.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">Belum ada agenda mendatang.</p>
+            ) : (
+              events.map(act => (
+                <div key={act.id} className="rounded-xl border border-border bg-muted/30 p-3.5 space-y-2 hover:border-primary/40 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-heading text-sm font-bold text-primary">{act.symbol}</span>
+                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${act.type === 'DIVIDEND' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                        {act.type}
+                      </span>
+                    </div>
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {act.cumDate ? `Cum Date: ${act.cumDate}` : `Event Date: ${act.eventDate}`}
+                    </span>
+                  </div>
+                  <h4 className="font-heading text-sm font-semibold text-foreground">{act.title}</h4>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{act.details}</p>
+                  {act.cashDividend && (
+                    <div className="flex items-center justify-between rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs">
+                      <span className="text-emerald-300">Estimasi Dividen:</span>
+                      <span className="font-bold text-emerald-400">Rp {act.cashDividend} ({act.dividendYield}%)</span>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </Modal>
       )}
@@ -742,7 +824,17 @@ function SkeletonCard() {
 }
 
 /* ── Stock card ── */
-function StockCard({ stock, flash }: { stock: Stock; flash?: string | null }) {
+function StockCard({
+  stock,
+  flash,
+  events = [],
+  onViewEvents,
+}: {
+  stock: Stock;
+  flash?: string | null;
+  events?: CorporateAction[];
+  onViewEvents?: (symbol: string, actions: CorporateAction[]) => void;
+}) {
   const isPositive = stock.changePercent >= 0;
   const isUnchanged = stock.changePercent === 0;
   const chartColor = isUnchanged ? '#6B7280' : isPositive ? '#22c55e' : '#ef4444';
@@ -750,6 +842,8 @@ function StockCard({ stock, flash }: { stock: Stock; flash?: string | null }) {
   const changeBg = isUnchanged ? 'bg-yellow-500/10' : isPositive ? 'bg-emerald-500/10' : 'bg-red-500/10';
   const chartData = stock.sparkline.map((value, i) => ({ i, value }));
   const flashClass = flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : '';
+
+  const hasEvents = events.length > 0;
 
   return (
     <div className={`group flex flex-col rounded-2xl border border-border bg-card p-5 transition-all hover:border-primary/30 hover:bg-card/80 ${flashClass}`}>
@@ -759,7 +853,19 @@ function StockCard({ stock, flash }: { stock: Stock; flash?: string | null }) {
             {stock.symbol.slice(0, 2)}
           </div>
           <div>
-            <h3 className="font-heading text-lg font-bold leading-none">{stock.symbol}</h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-heading text-lg font-bold leading-none">{stock.symbol}</h3>
+              {hasEvents && onViewEvents && (
+                <button
+                  onClick={() => onViewEvents(stock.symbol, events)}
+                  className="inline-flex cursor-pointer items-center rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary transition-transform hover:scale-105 active:scale-95"
+                  title="Ada agenda Aksi Korporasi"
+                >
+                  <Calendar className="mr-0.5 h-2.5 w-2.5" />
+                  {events[0].type === 'DIVIDEND' ? 'DIV' : 'RUPS'}
+                </button>
+              )}
+            </div>
             <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{stock.name}</p>
           </div>
         </div>
