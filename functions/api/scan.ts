@@ -98,7 +98,7 @@ export async function onRequest(context) {
         'Origin': 'https://idx-dashboard.pages.dev',
       },
       body: JSON.stringify({
-        filter: [{ left: 'name', operation: 'in_range', right: body.tickers.map(t => `IDX:${t}`) }],
+        filter: [{ left: 'name', operation: 'in_range', right: body.tickers }],
         columns: body.columns,
         sort: { sortBy: 'name', sortOrder: 'asc' },
         range: [0, Math.min(body.tickers.length, 100)],

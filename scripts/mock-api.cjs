@@ -1,7 +1,8 @@
 // Local mock for Cloudflare Pages Functions — standalone Node server
-// Handles: /api/scan, /api/user/init, /api/auth/verify, /api/groups (password-protected)
+// Handles: /api/scan (proxies to real TradingView Scanner API), /api/user/init, /api/auth/verify, /api/groups (password-protected)
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -13,22 +14,26 @@ function sha256(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
-function getMarketState(date = new Date()) {
-  // Mode Testing: Selalu kembalikan 'open' agar dapat dites setiap saat
+function getMarketState() {
   return 'open';
 }
 
 function cors(methods = 'POST, OPTIONS') {
-  return { 'Access-Control-Allow-Origin': 'http://localhost:5173', 'Access-Control-Allow-Methods': methods, 'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, Authorization', 'Access-Control-Max-Age': '86400' };
+  return {
+    'Access-Control-Allow-Origin': 'http://localhost:5173',
+    'Access-Control-Allow-Methods': methods,
+    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, Authorization',
+    'Access-Control-Max-Age': '86400',
+  };
 }
+
 function json(res, data, status = 200, extraHeaders = {}) {
   res.writeHead(status, { ...cors('GET, POST, DELETE, OPTIONS'), 'Content-Type': 'application/json', ...extraHeaders });
   res.end(JSON.stringify(data));
 }
 
 // ── In-memory D1 mock ──
-const users = new Map();   // userId -> { pinHash, createdAt, token, tokenExpiresAt }
-
+const users = new Map();
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -45,7 +50,7 @@ function tokenRequired(req, res) {
   return userId;
 }
 
-const userGroups = new Map(); // userId -> { groups: [...], tickers: Map<gid, ticker[]> }
+const userGroups = new Map();
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -58,39 +63,92 @@ function parseBody(req) {
   });
 }
 
+function mapRating(value) {
+  if (typeof value !== 'number') return 'neutral';
+  if (value >= 0.5) return 'strong_buy';
+  if (value >= 0.1) return 'buy';
+  if (value > -0.1) return 'neutral';
+  if (value >= -0.5) return 'sell';
+  return 'strong_sell';
+}
+
+function fetchTradingView(tickers, columns) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      filter: [{ left: 'name', operation: 'in_range', right: tickers }],
+      columns: columns || ['close', 'change', 'change_abs', 'volume', 'high', 'low', 'Recommend.All'],
+      sort: { sortBy: 'name', sortOrder: 'asc' },
+      range: [0, Math.min(tickers.length, 100)]
+    });
+
+    const req = https.request('https://scanner.tradingview.com/indonesia/scan', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Origin': 'https://idx-dashboard.pages.dev',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+        } else {
+          reject(new Error(`TradingView HTTP ${res.statusCode}: ${body}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 // ── Route handlers ──
 
 async function handleScan(req, res) {
   const data = await parseBody(req);
   if (!data || !Array.isArray(data.tickers)) return json(res, { error: 'Invalid ticker list' }, 400);
-  const BASE_PRICES = {
-    BBCA: 6450, BBRI: 2930, TLKM: 2850, ASII: 4620, UNVR: 2850,
-    GOTO: 50, BMRI: 4160, ADRO: 2860, ITMG: 12950, BBNI: 3590,
-    PTBA: 2760, BRIS: 2480, BELI: 142, INDY: 1850, ANTM: 1650,
-    DCII: 7450, ICBP: 11200, MTEL: 768, TOWR: 1040, MYOR: 2480,
-    COMPOSITE: 6185.78, LQ45: 608.58, IDX30: 308.20
-  };
-  const marketState = getMarketState();
-  let transformed;
-  if (marketState === 'open') {
-    const mapR = v => typeof v !== 'number' ? 'neutral' : v >= 0.5 ? 'strong_buy' : v >= 0.1 ? 'buy' : v > -0.1 ? 'neutral' : v >= -0.5 ? 'sell' : 'strong_sell';
-    transformed = data.tickers.map(t => {
-      const base = BASE_PRICES[t] || 1000;
-      const last = Math.round(base + (Math.random() * 2 - 1) * base * 0.015);
-      return { ticker: t, lastPrice: last, changePercent: ((last - base) / base) * 100, changeAbsolute: last - base, volume: Math.floor(Math.random() * 50000000), high: Math.round(base * 1.015), low: Math.round(base * 0.985), rating: mapR(Math.random() * 2 - 1) };
+
+  const tickerRegex = /^[A-Z]{4}$/;
+  const validTickers = data.tickers.filter(t => tickerRegex.test(t));
+
+  try {
+    const tvRaw = await fetchTradingView(validTickers, data.columns);
+    const transformed = (tvRaw.data || []).map(item => {
+      const d = item.d || [];
+      const ticker = (item.s || '').replace(/^IDX:/, '');
+      return {
+        ticker,
+        lastPrice: d[0] ?? null,
+        changePercent: d[1] ?? null,
+        changeAbsolute: d[2] ?? null,
+        volume: d[3] ?? null,
+        high: d[4] ?? null,
+        low: d[5] ?? null,
+        rating: mapRating(d[6])
+      };
     });
+
+    // Save real prices to cache file
     try {
       let cacheData = {};
       if (fs.existsSync(CACHE_FILE)) { try { cacheData = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); } catch {} }
       transformed.forEach(item => { cacheData[item.ticker] = item; });
       fs.writeFileSync(CACHE_FILE, JSON.stringify(cacheData, null, 2), 'utf8');
     } catch {}
-  } else {
+
+    json(res, { timestamp: new Date().toISOString(), marketStatus: 'open', cacheHit: false, data: transformed, errors: [] }, 200, { 'Cache-Control': 'public, max-age=3' });
+  } catch (err) {
+    console.error('TradingView fetch failed, using fallback cache:', err.message);
     let cacheData = {};
     try { if (fs.existsSync(CACHE_FILE)) cacheData = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); } catch {}
-    transformed = data.tickers.map(t => cacheData[t] || { ticker: t, lastPrice: BASE_PRICES[t] || 1000, changePercent: 0, changeAbsolute: 0, volume: 0, high: BASE_PRICES[t] || 1000, low: BASE_PRICES[t] || 1000, rating: 'neutral' });
+    const transformed = validTickers.map(t => cacheData[t] || { ticker: t, lastPrice: 1000, changePercent: 0, changeAbsolute: 0, volume: 0, high: 1000, low: 1000, rating: 'neutral' });
+    json(res, { timestamp: new Date().toISOString(), marketStatus: 'open', cacheHit: true, data: transformed, errors: [] }, 200);
   }
-  json(res, { timestamp: new Date().toISOString(), marketStatus: marketState, cacheHit: false, data: transformed, errors: [] }, 200, { 'Cache-Control': 'public, max-age=3' });
 }
 
 async function handleUserInit(req, res) {
@@ -148,7 +206,6 @@ async function handleGroups(req, res) {
 
 // ── Router ──
 const server = http.createServer((req, res) => {
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(200, cors('GET, POST, DELETE, OPTIONS'));
     res.end();
@@ -161,4 +218,4 @@ const server = http.createServer((req, res) => {
   json(res, { error: 'Not Found' }, 404);
 });
 
-server.listen(PORT, 'localhost', () => console.log(`Mock API on http://localhost:${PORT}/api/scan + user/init + auth/verify + groups`));
+server.listen(PORT, 'localhost', () => console.log(`Mock API on http://localhost:${PORT}/api/scan (TradingView Live)`));
