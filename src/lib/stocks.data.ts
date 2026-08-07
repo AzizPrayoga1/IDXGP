@@ -28,7 +28,7 @@ export const stockGroups: Record<string, string[]> = {
 };
 
 export const stocks: Stock[] = [
-  { symbol: "BBCA", name: "Bank Central Asia", sector: "Financials", price: 6300, change: 125, changePercent: 1.37, volume: 12450000, marketCap: 1134.2, pe: 18.4, week52Low: 5975, week52High: 8975, sparkline: [6200, 6220, 6250, 6230, 6270, 6250, 6290, 6310, 6300, 6290, 6320, 6300] },
+  { symbol: "BBCA", name: "Bank Central Asia", sector: "Financials", price: 6450, change: 125, changePercent: 1.37, volume: 12450000, marketCap: 1134.2, pe: 18.4, week52Low: 5975, week52High: 8975, sparkline: [6200, 6220, 6250, 6230, 6270, 6250, 6290, 6310, 6300, 6290, 6320, 6450] },
   { symbol: "BBRI", name: "Bank Rakyat Indonesia", sector: "Financials", price: 2930, change: -45, changePercent: -1.02, volume: 28700000, marketCap: 648.5, pe: 12.1, week52Low: 2820, week52High: 4890, sparkline: [2980, 2960, 2950, 2930, 2940, 2935, 2925, 2920, 2935, 2930, 2925, 2930] },
   { symbol: "TLKM", name: "Telkom Indonesia", sector: "Communication", price: 2850, change: 62, changePercent: 1.67, volume: 15300000, marketCap: 374.8, pe: 14.2, week52Low: 2500, week52High: 3890, sparkline: [2760, 2785, 2790, 2810, 2800, 2825, 2840, 2855, 2865, 2870, 2885, 2850] },
   { symbol: "ASII", name: "Astra International", sector: "Consumer Cyclical", price: 4620, change: -25, changePercent: -0.48, volume: 8900000, marketCap: 207.4, pe: 16.8, week52Low: 4100, week52High: 5350, sparkline: [4680, 4670, 4660, 4655, 4640, 4635, 4630, 4625, 4630, 4625, 4620, 4620] },

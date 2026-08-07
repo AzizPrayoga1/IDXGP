@@ -35,6 +35,10 @@ function Index() {
   const [tickerError, setTickerError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Real-time state ──
+  const [stocksState, setStocksState] = useState(defaultStocks);
+  const [liveIndices, setLiveIndices] = useState(marketIndices);
+
   // ── Flash animation state ──
   const prevPricesRef = useRef<Record<string, number>>({});
   const flashSeqRef = useRef<Record<string, number>>({});
@@ -125,13 +129,14 @@ function Index() {
     return activeGroup.tickers.length > 0 ? activeGroup.tickers : all;
   }, [store.activeGroupId, activeGroup]);
 
-  const { marketState, data: liveData, loading, lastUpdated, refresh, offline, errorStatus, connectionStatus, isInitialLoading } = useSmartPolling(activeTickers);
+  // Use smart polling for active tickers with 60s (1 minute) interval
+  const { marketState, data: liveData, loading, lastUpdated, refresh, offline, errorStatus, connectionStatus, isInitialLoading } = useSmartPolling(activeTickers, 60000);
 
-  // Stale status indicator helper variables
+  // Stale status indicator helper variables (expanded to 120s/2 min threshold since polling is now 60s)
   const isStale = useMemo(() => {
     if (!lastUpdated) return false;
     const diffSeconds = (new Date().getTime() - new Date(lastUpdated).getTime()) / 1000;
-    return diffSeconds > 8;
+    return diffSeconds > 120;
   }, [lastUpdated]);
 
   const [secondsAgo, setSecondsAgo] = useState(0);
@@ -147,35 +152,59 @@ function Index() {
 
   const showStaleOverlay = offline || connectionStatus === 'disconnected';
 
-  const mergedStocks = useMemo(() => {
-    return defaultStocks.map(s => {
-      const live = liveData.find(l => l.ticker === s.symbol);
-      if (live) {
-        const currentSparkline = [...s.sparkline];
-        if (live.lastPrice !== s.price) {
-          currentSparkline.shift();
-          currentSparkline.push(live.lastPrice);
+  // Update dynamic stocks state and sparklines on polling data return
+  useEffect(() => {
+    if (liveData.length === 0) return;
+    setStocksState(prev => {
+      return prev.map(s => {
+        const live = liveData.find(l => l.ticker === s.symbol);
+        if (live) {
+          const currentSparkline = [...s.sparkline];
+          if (live.lastPrice !== s.price) {
+            currentSparkline.shift();
+            currentSparkline.push(live.lastPrice);
+          }
+          return {
+            ...s,
+            price: live.lastPrice ?? s.price,
+            changePercent: live.changePercent ?? s.changePercent,
+            change: live.changeAbsolute ?? s.change,
+            volume: live.volume ?? s.volume,
+            high: live.high ?? s.high,
+            low: live.low ?? s.low,
+            sparkline: currentSparkline
+          };
         }
-        return {
-          ...s,
-          price: live.lastPrice ?? s.price,
-          changePercent: live.changePercent ?? s.changePercent,
-          change: live.changeAbsolute ?? s.change,
-          volume: live.volume ?? s.volume,
-          high: live.high ?? s.high,
-          low: live.low ?? s.low,
-          sparkline: currentSparkline,
-        };
-      }
-      return s;
+        return s;
+      });
     });
+
+    // Update dynamic market indices state on polling data return
+    const composite = liveData.find(l => l.ticker === 'COMPOSITE');
+    const lq45 = liveData.find(l => l.ticker === 'LQ45');
+    const idx30 = liveData.find(l => l.ticker === 'IDX30');
+    if (composite || lq45 || idx30) {
+      setLiveIndices(prev => {
+        const next = { ...prev };
+        if (composite) {
+          next.jci = { ...next.jci, value: composite.lastPrice, change: composite.changeAbsolute, changePercent: composite.changePercent };
+        }
+        if (lq45) {
+          next.lq45 = { ...next.lq45, value: lq45.lastPrice, change: lq45.changeAbsolute, changePercent: lq45.changePercent };
+        }
+        if (idx30) {
+          next.idx30 = { ...next.idx30, value: idx30.lastPrice, change: idx30.changeAbsolute, changePercent: idx30.changePercent };
+        }
+        return next;
+      });
+    }
   }, [liveData]);
 
   // Detect price changes for flash animation
   useEffect(() => {
     if (marketState === 'MARKET_BREAK') return;
     const newFlash: Record<string, 'up' | 'down' | null> = {};
-    for (const s of mergedStocks) {
+    for (const s of stocksState) {
       const prev = prevPricesRef.current[s.symbol];
       if (prev !== undefined && prev !== s.price) {
         newFlash[s.symbol] = s.price > prev ? 'up' : 'down';
@@ -199,10 +228,10 @@ function Index() {
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [mergedStocks, marketState]);
+  }, [stocksState, marketState]);
 
   const filteredStocks = useMemo(() => {
-    let result = mergedStocks;
+    let result = stocksState;
     if (activeGroup && activeGroup.tickers.length > 0) {
       result = result.filter(s => activeGroup.tickers.includes(s.symbol));
     }
@@ -211,10 +240,10 @@ function Index() {
       result = result.filter(s => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.sector.toLowerCase().includes(q));
     }
     return result;
-  }, [activeGroup, searchQuery, mergedStocks]);
+  }, [activeGroup, searchQuery, stocksState]);
 
-  const topGainers = useMemo(() => [...mergedStocks].sort((a, b) => b.changePercent - a.changePercent).slice(0, 4), [mergedStocks]);
-  const topLosers = useMemo(() => [...mergedStocks].sort((a, b) => a.changePercent - b.changePercent).slice(0, 4), [mergedStocks]);
+  const topGainers = useMemo(() => [...stocksState].sort((a, b) => b.changePercent - a.changePercent).slice(0, 4), [stocksState]);
+  const topLosers = useMemo(() => [...stocksState].sort((a, b) => a.changePercent - b.changePercent).slice(0, 4), [stocksState]);
 
   // Undo ticker removal with timeout
   const scheduleUndoClear = useRef<any>(null);
@@ -493,7 +522,7 @@ function Index() {
           {!activeGroup || store.activeGroupId === '__all__' ? (
             <>
               <HeroSection marketState={marketState} />
-              <MarketIndices />
+              <MarketIndices indices={liveIndices} />
             </>
           ) : null}
 
@@ -879,10 +908,10 @@ function HeroSection({ marketState }: { marketState: MarketState }) {
 }
 
 /* ── Market Indices ── */
-function MarketIndices() {
+function MarketIndices({ indices }: { indices: typeof marketIndices }) {
   return (
     <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {Object.entries(marketIndices).map(([key, idx]) => {
+      {Object.entries(indices).map(([key, idx]) => {
         const isPositive = idx.changePercent >= 0;
         return (
           <div key={key} className="rounded-2xl border border-border bg-card p-5 transition-colors hover:border-primary/30">

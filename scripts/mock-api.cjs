@@ -14,16 +14,8 @@ function sha256(data) {
 }
 
 function getMarketState(date = new Date()) {
-  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jakarta', weekday: 'short', hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false });
-  const parts = formatter.formatToParts(date);
-  const getVal = (type) => parts.find(p => p.type === type)?.value || "";
-  const weekday = getVal('weekday');
-  if (weekday === 'Sat' || weekday === 'Sun') return 'closed';
-  const minutes = parseInt(getVal('hour'), 10) * 60 + parseInt(getVal('minute'), 10);
-  if (minutes >= 540 && minutes < 720) return 'open';
-  if (minutes >= 720 && minutes < 810) return 'break';
-  if (minutes >= 810 && minutes < 960) return 'open';
-  return 'closed';
+  // Mode Testing: Selalu kembalikan 'open' agar dapat dites setiap saat
+  return 'open';
 }
 
 function cors(methods = 'POST, OPTIONS') {
@@ -72,10 +64,11 @@ async function handleScan(req, res) {
   const data = await parseBody(req);
   if (!data || !Array.isArray(data.tickers)) return json(res, { error: 'Invalid ticker list' }, 400);
   const BASE_PRICES = {
-    BBCA: 6300, BBRI: 2930, TLKM: 2850, ASII: 4620, UNVR: 2850,
+    BBCA: 6450, BBRI: 2930, TLKM: 2850, ASII: 4620, UNVR: 2850,
     GOTO: 50, BMRI: 4160, ADRO: 2860, ITMG: 12950, BBNI: 3590,
     PTBA: 2760, BRIS: 2480, BELI: 142, INDY: 1850, ANTM: 1650,
     DCII: 7450, ICBP: 11200, MTEL: 768, TOWR: 1040, MYOR: 2480,
+    COMPOSITE: 6185.78, LQ45: 608.58, IDX30: 308.20
   };
   const marketState = getMarketState();
   let transformed;
