@@ -3,6 +3,10 @@ account_id = "<your-cloudflare-account-id>"
 compatibility_date = "2025-04-01"
 pages_build_output_dir = "dist"
 
+# Cron Trigger: Jam 05:00 UTC = 12:00 Siang WIB (Setiap Hari)
+[triggers]
+crons = ["0 5 * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "idxgp-db"
